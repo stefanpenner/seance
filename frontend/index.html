@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>seance</title>
+    <link rel="stylesheet" href="./style.css" />
+    <style>
+      .settings-fab-stack .seance-logout {
+        font-size: 11px;
+        line-height: 1;
+        padding: 6px 10px;
+        border-radius: 8px;
+        text-decoration: none;
+        color: #aaa;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.08);
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s;
+      }
+      .settings-fab-stack .seance-logout:hover {
+        background: rgba(255,80,80,0.15);
+        color: #f88;
+      }
+    </style>
+    <script>
+      // Set PTY URL to same-origin WebSocket before the app loads
+      document.addEventListener('DOMContentLoaded', function() {
+        var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        var ptyUrl = proto + '//' + location.host + '/pty';
+
+        // Set the PTY URL input
+        var urlInput = document.getElementById('ptyUrl');
+        if (urlInput) urlInput.value = ptyUrl;
+
+        // Default to WebSocket PTY backend
+        var backendSelect = document.getElementById('connectionBackend');
+        if (backendSelect) backendSelect.value = 'ws';
+
+        // Auto-connect after a short delay to let the app initialize
+        setTimeout(function() {
+          var btn = document.getElementById('btnPty');
+          if (btn) btn.click();
+        }, 500);
+      });
+    </script>
+  </head>
+  <body>
+    <main id="paneRoot" class="pane-root"></main>
+
+    <div class="settings-fab-stack">
+      <a class="seance-logout" href="/logout" title="Sign out">logout</a>
+      <button id="settingsFab" class="settings-fab" type="button" aria-label="Open settings" title="Settings">
+        <svg class="settings-fab-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path
+            d="M19.14 12.94c.04-.31.06-.62.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.2 7.2 0 0 0-1.63-.94L14.5 2.5a.5.5 0 0 0-.5-.5h-4a.5.5 0 0 0-.5.5l-.36 2.82c-.58.22-1.13.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.6 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.62-.06.94s.02.63.06.94L2.72 14.52a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.4 1.05.72 1.63.94l.36 2.82a.5.5 0 0 0 .5.5h4a.5.5 0 0 0 .5-.5l.25-2.82c.58-.22 1.13-.54 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"
+          />
+        </svg>
+      </button>
+    </div>
+
+    <dialog id="settingsDialog" class="settings-dialog">
+      <div class="panel settings-panel">
+        <header>
+          <h1>seance</h1>
+          <div class="status-bar">
+            <span id="backend">-</span>
+            <span><span id="fps">0</span> fps</span>
+            <span id="termSize">0x0</span>
+          </div>
+          <button id="settingsClose" class="settings-close" type="button" aria-label="Close settings">&#10005;</button>
+        </header>
+
+        <section class="section">
+          <div class="section-title">Terminal</div>
+          <div class="btn-row">
+            <button id="btnInit">Init</button>
+            <button id="btnPause">Pause</button>
+            <button id="btnClear">Clear</button>
+          </div>
+          <div class="field-row">
+            <label>
+              <span>Renderer</span>
+              <select id="rendererSelect">
+                <option value="auto">Auto</option>
+                <option value="webgpu">WebGPU</option>
+                <option value="webgl2">WebGL2</option>
+              </select>
+            </label>
+            <label>
+              <span>Font</span>
+              <input id="fontSize" type="number" min="10" max="64" step="1" value="18" />
+            </label>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-title">Connection</div>
+          <div class="field-row">
+            <label>
+              <span>Backend</span>
+              <select id="connectionBackend">
+                <option value="ws" selected>WebSocket PTY</option>
+                <option value="webcontainer">WebContainer</option>
+              </select>
+            </label>
+          </div>
+          <div class="field-row">
+            <input id="ptyUrl" type="text" value="" placeholder="PTY URL" />
+            <button id="btnPty">Connect</button>
+          </div>
+          <div class="field-row">
+            <input id="wcCommand" type="text" value="jsh" placeholder="WebContainer command" />
+            <input id="wcCwd" type="text" value="/" placeholder="WebContainer cwd" />
+          </div>
+          <div id="connectionHint" class="hint">Using WebSocket PTY</div>
+          <div class="pty-status"><span id="ptyStatus">disconnected</span></div>
+        </section>
+
+        <section class="section">
+          <div class="section-title">Appearance</div>
+          <div class="field-row">
+            <select id="fontFamily">
+              <option value="jetbrains">Base Font: JetBrains Mono (default)</option>
+            </select>
+          </div>
+          <div class="field-row">
+            <select id="fontFamilyLocal">
+              <option value="">Local Font: None</option>
+            </select>
+            <button id="btnLoadLocalFonts" type="button">Detect Local</button>
+          </div>
+          <div id="fontFamilyHint" class="hint">Main font family for all panes. Use Detect Local to add system fonts.</div>
+          <div class="field-row">
+            <select id="themeSelect">
+              <option value="">Default Theme</option>
+            </select>
+            <label class="file-input">
+              <input id="themeFile" type="file" accept=".conf,.theme,.txt" />
+              <span>Upload</span>
+            </label>
+          </div>
+          <div class="field-row">
+            <select id="mouseMode">
+              <option value="auto" selected>Mouse: Auto</option>
+              <option value="on">Mouse: On</option>
+              <option value="off">Mouse: Off</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-title">Demo</div>
+          <div class="field-row">
+            <select id="demoSelect">
+              <option value="basic">Basics</option>
+              <option value="palette">Palette</option>
+              <option value="unicode">Unicode</option>
+              <option value="anim">Animation</option>
+            </select>
+            <button id="btnRunDemo">Run</button>
+          </div>
+        </section>
+      </div>
+    </dialog>
+
+    <script type="module" src="./playground.js"></script>
+  </body>
+</html>
