@@ -900,6 +900,17 @@ func setupMux(cfg config, sess *sessions, mgr *session.Manager, frontendContent 
 		w.Write(indexHTML)
 	})
 
+	// Serve help.js without auth so it works on the login page
+	mux.HandleFunc("/help.js", func(w http.ResponseWriter, r *http.Request) {
+		data, err := fs.ReadFile(frontendContent, "help.js")
+		if err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Write(data)
+	})
+
 	fileServer := http.FileServer(http.FS(frontendContent))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/login" || r.URL.Path == "/login.html" {
