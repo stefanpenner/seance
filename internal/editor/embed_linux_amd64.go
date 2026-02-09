@@ -1,4 +1,4 @@
-//go:build linux && amd64
+//go:build !no_editor && linux && amd64
 
 package editor
 

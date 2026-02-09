@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"math/big"
@@ -596,6 +597,25 @@ func setupMux(cfg config, sess *sessions, mgr *session.Manager, frontendContent 
 		}
 	})
 
+	// --- Shutdown API ---
+
+	mux.HandleFunc("/api/shutdown", func(w http.ResponseWriter, r *http.Request) {
+		if !requireAuth(w, r) {
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		go func() {
+			syscall.Kill(os.Getpid(), syscall.SIGTERM)
+		}()
+	})
+
 	// --- Session-aware PTY WebSocket: /pty/{id} ---
 
 	mux.HandleFunc("/pty/", func(w http.ResponseWriter, r *http.Request) {
@@ -810,6 +830,34 @@ func buildChildEnv() []string {
 		result = append(result, k+"="+v)
 	}
 	return result
+}
+
+// startEditor creates and starts a code-server instance, wiring it into the proxy.
+func startEditor(cfg config, proxy *editor.EditorProxy, logOutput io.Writer) (*editor.Editor, error) {
+	baseDir, err := seanceDir()
+	if err != nil {
+		return nil, err
+	}
+
+	ed, err := editor.New(baseDir)
+	if err != nil {
+		return nil, err
+	}
+
+	workDir := cfg.editorDir
+	if workDir == "" {
+		workDir, _ = os.UserHomeDir()
+	}
+
+	ctx := context.Background()
+	if err := ed.Start(ctx, workDir, logOutput); err != nil {
+		return nil, err
+	}
+
+	proxy.SetHandler(ed.Handler())
+	log.Println("code-server started at /editor/")
+
+	return ed, nil
 }
 
 // TLS

@@ -28,6 +28,8 @@ func main() {
 			id = os.Args[2]
 		}
 		seance.RunKill(id)
+	case "stop":
+		seance.RunStop()
 	case "list", "ls":
 		seance.RunList()
 	case "--help", "-h", "help":
@@ -52,11 +54,13 @@ Commands:
   daemon       Start server without TUI (background mode)
   attach [id]  Attach to a session on a running daemon
   kill [id]    Kill a session on a running daemon
+  stop         Shut down a running daemon
   list         List sessions on a running daemon
   help         Show this help
 
 Flags:
   --no-password  Disable authentication
+  --no-editor    Disable embedded code-server editor
   --insecure     Skip TLS verification (for attach/list with self-signed certs)
 
 Environment:
@@ -65,5 +69,6 @@ Environment:
   SEANCE_TLS_CERT    TLS certificate file
   SEANCE_TLS_KEY     TLS key file
   SEANCE_SHELL       Default shell
-  SEANCE_BUFFER_SIZE Ring buffer size per session`)
+  SEANCE_BUFFER_SIZE Ring buffer size per session
+  SEANCE_EDITOR_DIR  Working directory for code-server editor`)
 }

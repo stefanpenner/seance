@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # Lite variants (no code-server)
+          - platform: linux_amd64
+            variant: lite
+            target: //cmd:run_lite
+            binary: seance-linux-amd64
+            bin_path: bazel-bin/cmd/run_lite_/run_lite
+          - platform: linux_arm64
+            variant: lite
+            target: //cmd:run_lite
+            binary: seance-linux-arm64
+            bin_path: bazel-bin/cmd/run_lite_/run_lite
+          - platform: darwin_amd64
+            variant: lite
+            target: //cmd:run_lite
+            binary: seance-darwin-amd64
+            bin_path: bazel-bin/cmd/run_lite_/run_lite
+          - platform: darwin_arm64
+            variant: lite
+            target: //cmd:run_lite
+            binary: seance-darwin-arm64
+            bin_path: bazel-bin/cmd/run_lite_/run_lite
+
+          # Full variants (with code-server)
+          - platform: linux_amd64
+            variant: full
+            target: //cmd:run
+            binary: seance-linux-amd64-full
+            bin_path: bazel-bin/cmd/run_/run
+          - platform: linux_arm64
+            variant: full
+            target: //cmd:run
+            binary: seance-linux-arm64-full
+            bin_path: bazel-bin/cmd/run_/run
+          - platform: darwin_amd64
+            variant: full
+            target: //cmd:run
+            binary: seance-darwin-amd64-full
+            bin_path: bazel-bin/cmd/run_/run
+          - platform: darwin_arm64
+            variant: full
+            target: //cmd:run
+            binary: seance-darwin-arm64-full
+            bin_path: bazel-bin/cmd/run_/run
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.14.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-${{ matrix.binary }}
+          repository-cache: true
+
+      - name: Build
+        run: >
+          bazel build ${{ matrix.target }}
+          --platforms=@rules_go//go/toolchain:${{ matrix.platform }}
+
+      - name: Copy binary
+        run: cp ${{ matrix.bin_path }} ${{ matrix.binary }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary }}
+          path: ${{ matrix.binary }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          for dir in artifacts/*/; do
+            cp "$dir"* release/
+          done
+          cd release
+          sha256sum * > checksums.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true

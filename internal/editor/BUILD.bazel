@@ -20,6 +20,16 @@ genrule(
     }),
 )
 
+# Empty tarball for lite builds (no code-server).
+genrule(
+    name = "code_server_archive_empty",
+    srcs = [],
+    outs = ["code-server-empty.tar.gz"],
+    cmd = "touch $@",
+    tags = ["manual"],
+)
+
+# Full editor library — embeds the real code-server tarball.
 go_library(
     name = "editor",
     srcs = [
@@ -33,5 +43,20 @@ go_library(
     }),
     embedsrcs = [":code_server_archive"],
     importpath = "seance/internal/editor",
+    visibility = ["//:__subpackages__"],
+)
+
+# Lite editor library — always uses stub (no code-server).
+# Tagged "manual" so it is not built by `bazel build //...` or `bazel test //...`.
+# Build explicitly via: bazel build //cmd:run_lite
+go_library(
+    name = "editor_lite",
+    srcs = [
+        "editor.go",
+        "embed_stub_lite.go",
+    ],
+    embedsrcs = [":code_server_archive_empty"],
+    importpath = "seance/internal/editor",
+    tags = ["manual"],
     visibility = ["//:__subpackages__"],
 )

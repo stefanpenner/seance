@@ -19,6 +19,26 @@ go_library(
     ],
 )
 
+go_library(
+    name = "seance_lite",
+    srcs = [
+        "seance.go",
+        "seance_cli.go",
+    ],
+    embedsrcs = glob(["frontend/**"]),
+    importpath = "seance",
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/editor:editor_lite",
+        "//internal/session",
+        "//internal/tui",
+        "@com_github_charmbracelet_bubbletea//:bubbletea",
+        "@com_github_gorilla_websocket//:websocket",
+        "@org_golang_x_term//:term",
+    ],
+)
+
 go_test(
     name = "seance_test",
     srcs = ["seance_test.go"],

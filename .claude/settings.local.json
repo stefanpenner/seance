@@ -30,7 +30,9 @@
       "Bash(bazel build:*)",
       "WebFetch(domain:api.github.com)",
       "WebFetch(domain:coder.com)",
-      "Bash(gh api:*)"
+      "Bash(gh api:*)",
+      "Bash(bazel query:*)",
+      "Bash(bazel info:*)"
     ]
   }
 }

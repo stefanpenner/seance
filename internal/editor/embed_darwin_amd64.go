@@ -1,4 +1,4 @@
-//go:build darwin && amd64
+//go:build !no_editor && darwin && amd64
 
 package editor
 

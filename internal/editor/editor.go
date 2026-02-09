@@ -2,6 +2,7 @@ package editor
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -208,7 +209,7 @@ func (p *EditorProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // extractTarGz decompresses a gzip'd tar archive into dst.
 func extractTarGz(data []byte, dst string) error {
-	gr, err := gzip.NewReader(bytesReader(data))
+	gr, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("gzip: %w", err)
 	}
@@ -289,20 +290,3 @@ func findBinary(cacheDir string) (string, error) {
 	return "", fmt.Errorf("code-server binary not found in %s", cacheDir)
 }
 
-type bytesReaderWrapper struct {
-	data []byte
-	pos  int
-}
-
-func bytesReader(data []byte) io.Reader {
-	return &bytesReaderWrapper{data: data}
-}
-
-func (r *bytesReaderWrapper) Read(p []byte) (int, error) {
-	if r.pos >= len(r.data) {
-		return 0, io.EOF
-	}
-	n := copy(p, r.data[r.pos:])
-	r.pos += n
-	return n, nil
-}

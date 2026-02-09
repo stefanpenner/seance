@@ -5,3 +5,11 @@ go_binary(
     srcs = ["main.go"],
     deps = ["//:seance"],
 )
+
+go_binary(
+    name = "run_lite",
+    srcs = ["main.go"],
+    gotags = ["bazel_lite"],
+    tags = ["manual"],
+    deps = ["//:seance_lite"],
+)

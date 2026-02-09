@@ -319,3 +319,40 @@ func RunKill(sessionID string) {
 		os.Exit(1)
 	}
 }
+
+// RunStop shuts down a running seance server.
+func RunStop() {
+	cc := loadCLIConfig()
+	baseURL := "https://" + cc.addr
+	client := newCLIClient(cc)
+
+	if err := authenticate(client, baseURL, cc.password); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/shutdown", nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		// Connection reset/EOF is expected — server is shutting down
+		fmt.Println("seance stopped")
+		return
+	}
+	resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusNoContent:
+		fmt.Println("seance stopped")
+	case http.StatusUnauthorized:
+		fmt.Fprintln(os.Stderr, "error: unauthorized (check SEANCE_PASSWORD)")
+		os.Exit(1)
+	default:
+		fmt.Fprintf(os.Stderr, "error: unexpected status %d\n", resp.StatusCode)
+		os.Exit(1)
+	}
+}

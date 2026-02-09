@@ -44,11 +44,32 @@ Seance embeds [Ghostty](https://ghostty.org)'s WASM terminal renderer and serves
 |---|---|
 | ![TUI Dashboard](screenshots/tui.png) | ![Session switcher](screenshots/switcher.png) |
 
+## Prerequisites
+
+Install [Bazelisk](https://github.com/bazelbuild/bazelisk), which manages the correct Bazel version automatically:
+
+```sh
+# macOS
+brew install bazelisk
+
+# or via npm
+npm install -g @aspect-bazel/bazelisk
+
+# or download from https://github.com/bazelbuild/bazelisk/releases
+```
+
 ## Quick start
 
 ```sh
-SEANCE_PASSWORD=secret seance
+# build
+bazel build //cmd:run
+
+# run (starts server + TUI)
+SEANCE_PASSWORD=secret bazel run //cmd:run
 # open https://localhost:8443
+
+# run tests
+bazel test //...
 ```
 
 ## Features
@@ -64,11 +85,12 @@ SEANCE_PASSWORD=secret seance
 ## Usage
 
 ```
-seance               start server + TUI
-seance daemon        headless server
-seance attach [id]   attach to a session
-seance list          list sessions
-seance kill [id]     kill a session
+bazel run //cmd:run                       start server + TUI
+bazel run //cmd:run -- daemon             headless server
+bazel run //cmd:run -- attach [id]        attach to a session
+bazel run //cmd:run -- list               list sessions
+bazel run //cmd:run -- kill [id]          kill a session
+bazel run //cmd:run -- stop               shut down a running daemon
 ```
 
 ## Configuration
@@ -81,11 +103,3 @@ seance kill [id]     kill a session
 | `SEANCE_TLS_CERT` | *auto* | TLS cert path |
 | `SEANCE_TLS_KEY` | *auto* | TLS key path |
 | `SEANCE_BUFFER_SIZE` | `1048576` | scrollback per session |
-
-## Build
-
-```sh
-go build -o seance ./cmd
-```
-
-Requires Go 1.25+.
