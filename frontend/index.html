@@ -71,11 +71,53 @@
           if (btn) btn.click();
         }, 500);
 
-        // WebSocket wrapper to intercept status messages
+        // Auto-reconnect state
+        var exitedSessions = {};
+        var reconnectAttempts = {};
+        var reconnectTimers = {};
+
+        window.addEventListener('pty-exit', function(e) {
+          if (e.detail.sessionId) exitedSessions[e.detail.sessionId] = true;
+        });
+
+        function scheduleReconnect(sid) {
+          if (exitedSessions[sid]) return;
+          var attempts = (reconnectAttempts[sid] || 0) + 1;
+          reconnectAttempts[sid] = attempts;
+          var delay = Math.min(1000 * Math.pow(2, attempts - 1), 30000);
+          if (reconnectTimers[sid]) clearTimeout(reconnectTimers[sid]);
+          reconnectTimers[sid] = setTimeout(function() {
+            delete reconnectTimers[sid];
+            if (exitedSessions[sid]) return;
+            // Trigger reconnect: click the Connect button (works for main pane)
+            // For sub-panes, dispatch event so playground.js can pick it up
+            window.dispatchEvent(new CustomEvent('pty-reconnect', {
+              detail: { sessionId: sid }
+            }));
+            var btn = document.getElementById('btnPty');
+            if (btn) btn.click();
+          }, delay);
+        }
+
+        // WebSocket wrapper to intercept status/exit messages and auto-reconnect
         var origWS = window.WebSocket;
         window.WebSocket = function(url, protocols) {
           var ws = protocols ? new origWS(url, protocols) : new origWS(url);
           if (url.indexOf('/pty/') !== -1) {
+            var match = url.match(/\/pty\/([^?/]+)/);
+            var sid = match ? match[1] : null;
+
+            // Reset backoff on successful connection
+            ws.addEventListener('open', function() {
+              if (sid) {
+                reconnectAttempts[sid] = 0;
+                if (reconnectTimers[sid]) {
+                  clearTimeout(reconnectTimers[sid]);
+                  delete reconnectTimers[sid];
+                }
+              }
+            });
+
             ws.addEventListener('message', function(ev) {
               if (typeof ev.data === 'string') {
                 try {
@@ -84,15 +126,20 @@
                     nameEl.textContent = msg.session_name;
                   }
                   if (msg.type === 'exit') {
-                    // Extract session ID from URL: .../pty/{id}...
-                    var match = url.match(/\/pty\/([^?/]+)/);
-                    if (match) {
+                    if (sid) {
                       window.dispatchEvent(new CustomEvent('pty-exit', {
-                        detail: { sessionId: match[1], code: msg.code }
+                        detail: { sessionId: sid, code: msg.code }
                       }));
                     }
                   }
                 } catch(e) {}
+              }
+            });
+
+            // Auto-reconnect on unexpected close
+            ws.addEventListener('close', function(ev) {
+              if (sid && !exitedSessions[sid]) {
+                scheduleReconnect(sid);
               }
             });
           }
@@ -395,7 +442,6 @@
       <span id="sessionName"></span>
       <div class="session-bar-right">
         <span class="session-bar-hint">ctrl+shift+k</span>
-        <a href="/editor/" class="session-bar-link">editor</a>
         <a href="/sessions" class="session-bar-link">sessions</a>
       </div>
     </div>
