@@ -369,21 +369,12 @@
           }
         }, true);
 
-        // Cmd-W / Ctrl-W: close focused ghostty pane before closing window
+        // Ctrl-W: close focused pane and its underlying TTY
         window.addEventListener('keydown', function(e) {
           if ((e.metaKey || e.ctrlKey) && e.key === 'w') {
-            var paneRoot = document.getElementById('paneRoot');
-            if (!paneRoot) return;
-            // Count terminal panes (direct children that are pane containers)
-            var panes = paneRoot.querySelectorAll('[data-pane-id]');
-            if (panes.length > 1) {
-              // Multiple panes — send close to the focused one via Ghostty
-              e.preventDefault();
-              e.stopImmediatePropagation();
-              // Dispatch a ghostty close_surface action
-              window.dispatchEvent(new CustomEvent('ghostty-close-surface'));
-            }
-            // If only one pane (or none), let browser handle Cmd-W normally
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            window.dispatchEvent(new CustomEvent('close-focused-pane'));
           }
         }, true);
 

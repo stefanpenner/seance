@@ -58258,6 +58258,21 @@ window.addEventListener("pty-exit", (e) => {
     }
   }
 });
+window.addEventListener("close-focused-pane", () => {
+  const pane = restty.getFocusedPane() ?? restty.getActivePane() ?? restty.getPanes()[0];
+  if (!pane)
+    return;
+  const state = paneStates.get(pane.id);
+  const sid = state?.sessionId;
+  if (restty.getPanes().length > 1) {
+    restty.closePane(pane.id);
+  } else {
+    if (sid) {
+      fetch("/api/sessions/" + sid, { method: "DELETE" }).catch(() => {});
+    }
+    location.href = "/sessions";
+  }
+});
 
 //# debugId=96A3E56C60A95A0164756E2164756E21
 //# sourceMappingURL=app.js.map
