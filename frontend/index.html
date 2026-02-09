@@ -12,40 +12,399 @@
         padding: 6px 10px;
         border-radius: 8px;
         text-decoration: none;
-        color: #aaa;
-        background: rgba(255,255,255,0.06);
-        border: 1px solid rgba(255,255,255,0.08);
+        color: #a9b1d6;
+        background: rgba(122,162,247,0.06);
+        border: 1px solid rgba(122,162,247,0.12);
         cursor: pointer;
         transition: background 0.15s, color 0.15s;
       }
       .settings-fab-stack .seance-logout:hover {
-        background: rgba(255,80,80,0.15);
-        color: #f88;
+        background: rgba(247,118,142,0.12);
+        color: #f7768e;
       }
     </style>
     <script>
-      // Set PTY URL to same-origin WebSocket before the app loads
+      // Session-aware PTY connection + switcher
       document.addEventListener('DOMContentLoaded', function() {
-        var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        var ptyUrl = proto + '//' + location.host + '/pty';
+        var params = new URLSearchParams(location.search);
+        var sessionId = params.get('session');
 
-        // Set the PTY URL input
+        if (!sessionId) {
+          location.href = '/sessions';
+          return;
+        }
+
+        var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        var ptyUrl = proto + '//' + location.host + '/pty/' + sessionId;
+
         var urlInput = document.getElementById('ptyUrl');
         if (urlInput) urlInput.value = ptyUrl;
 
-        // Default to WebSocket PTY backend
         var backendSelect = document.getElementById('connectionBackend');
         if (backendSelect) backendSelect.value = 'ws';
 
-        // Auto-connect after a short delay to let the app initialize
+        // Session bar
+        var bar = document.getElementById('sessionBar');
+        var nameEl = document.getElementById('sessionName');
+        if (bar) {
+          bar.style.display = '';
+          document.body.classList.add('has-session-bar');
+          setTimeout(function() { window.dispatchEvent(new Event('resize')); }, 100);
+        }
+
         setTimeout(function() {
           var btn = document.getElementById('btnPty');
           if (btn) btn.click();
         }, 500);
+
+        // WebSocket wrapper to intercept status messages
+        var origWS = window.WebSocket;
+        window.WebSocket = function(url, protocols) {
+          var ws = protocols ? new origWS(url, protocols) : new origWS(url);
+          if (url.indexOf('/pty/') !== -1) {
+            ws.addEventListener('message', function(ev) {
+              if (typeof ev.data === 'string') {
+                try {
+                  var msg = JSON.parse(ev.data);
+                  if (msg.type === 'status' && msg.session_name && nameEl) {
+                    nameEl.textContent = msg.session_name;
+                  }
+                  if (msg.type === 'exit') {
+                    // Extract session ID from URL: .../pty/{id}...
+                    var match = url.match(/\/pty\/([^?/]+)/);
+                    if (match) {
+                      window.dispatchEvent(new CustomEvent('pty-exit', {
+                        detail: { sessionId: match[1], code: msg.code }
+                      }));
+                    }
+                  }
+                } catch(e) {}
+              }
+            });
+          }
+          return ws;
+        };
+        window.WebSocket.prototype = origWS.prototype;
+        window.WebSocket.CONNECTING = origWS.CONNECTING;
+        window.WebSocket.OPEN = origWS.OPEN;
+        window.WebSocket.CLOSING = origWS.CLOSING;
+        window.WebSocket.CLOSED = origWS.CLOSED;
+
+        // --- Session Switcher (Ctrl+K) ---
+        var switcher = document.getElementById('switcher');
+        var switcherList = document.getElementById('switcherList');
+        var switcherPreview = document.getElementById('switcherPreview');
+        var switcherRename = document.getElementById('switcherRename');
+        var switcherRenameInput = document.getElementById('switcherRenameInput');
+        var switcherSessions = [];
+        var switcherCursor = 0;
+        var switcherOpen = false;
+        var switcherMode = 'navigate'; // 'navigate' | 'rename'
+
+        function escapeHtml(s) {
+          var d = document.createElement('div');
+          d.textContent = s;
+          return d.innerHTML;
+        }
+
+        function timeAgo(dateStr) {
+          var sec = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+          if (sec < 60) return 'now';
+          var min = Math.floor(sec / 60);
+          if (min < 60) return min + 'm';
+          var hr = Math.floor(min / 60);
+          if (hr < 24) return hr + 'h';
+          return Math.floor(hr / 24) + 'd';
+        }
+
+        function stripAnsi(str) {
+          return str.replace(/\x1b\[[\x20-\x3f]*[\x40-\x7e]/g, '')
+                    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+                    .replace(/\x1b[()][0-9A-B]/g, '')
+                    .replace(/\x1b[\x20-\x2f]*[\x30-\x7e]/g, '')
+                    .replace(/[\x00-\x08\x0e-\x1f\x7f]/g, '');
+        }
+
+        function renderSwitcherList() {
+          switcherList.innerHTML = switcherSessions.map(function(s, i) {
+            var cls = 'switcher-item';
+            if (i === switcherCursor) cls += ' selected';
+            if (s.id === sessionId) cls += ' current';
+            var dot = s.exited ? 'exited' : 'running';
+            var viewers = s.viewers > 0 ? s.viewers + 'v' : '';
+            return '<div class="' + cls + '" data-idx="' + i + '">' +
+              '<div class="switcher-dot ' + dot + '"></div>' +
+              '<span class="switcher-item-name">' + escapeHtml(s.name) + '</span>' +
+              '<span class="switcher-item-meta">' + timeAgo(s.created_at) + '</span>' +
+              (viewers ? '<span class="switcher-item-viewers">' + viewers + '</span>' : '') +
+            '</div>';
+          }).join('');
+
+          // Click to select + switch
+          switcherList.querySelectorAll('.switcher-item').forEach(function(el) {
+            el.addEventListener('click', function() {
+              switcherCursor = parseInt(el.dataset.idx);
+              switchToSelected();
+            });
+          });
+
+          loadPreview();
+        }
+
+        function loadPreview() {
+          if (switcherSessions.length === 0) {
+            switcherPreview.textContent = '';
+            return;
+          }
+          var s = switcherSessions[switcherCursor];
+          if (!s) return;
+          fetch('/api/sessions/' + s.id + '/preview')
+            .then(function(r) { return r.text(); })
+            .then(function(text) {
+              var clean = stripAnsi(text);
+              // Show last ~20 lines
+              var lines = clean.split('\n');
+              if (lines.length > 20) lines = lines.slice(-20);
+              switcherPreview.textContent = lines.join('\n');
+              switcherPreview.scrollTop = switcherPreview.scrollHeight;
+            })
+            .catch(function() { switcherPreview.textContent = ''; });
+        }
+
+        function openSwitcher() {
+          if (switcherOpen) return;
+          switcherOpen = true;
+          switcherMode = 'navigate';
+          switcherRename.style.display = 'none';
+          switcher.style.display = '';
+          switcherCursor = 0;
+          switcherPreview.textContent = '';
+
+          fetch('/api/sessions')
+            .then(function(r) { return r.json(); })
+            .then(function(sessions) {
+              switcherSessions = (sessions || [])
+                .filter(function(s) { return !s.parent_id; })
+                .sort(function(a, b) {
+                  return new Date(a.created_at) - new Date(b.created_at);
+                });
+              // Put cursor on current session
+              for (var i = 0; i < switcherSessions.length; i++) {
+                if (switcherSessions[i].id === sessionId) { switcherCursor = i; break; }
+              }
+              renderSwitcherList();
+            });
+        }
+
+        function closeSwitcher() {
+          switcherOpen = false;
+          switcherMode = 'navigate';
+          switcher.style.display = 'none';
+          switcherRename.style.display = 'none';
+        }
+
+        function switchToSelected() {
+          if (switcherSessions.length === 0) return;
+          var s = switcherSessions[switcherCursor];
+          if (s.id === sessionId) { closeSwitcher(); return; }
+          location.href = '/terminal?session=' + s.id;
+        }
+
+        function startSwitcherRename() {
+          if (switcherSessions.length === 0) return;
+          switcherMode = 'rename';
+          switcherRename.style.display = '';
+          switcherRenameInput.value = switcherSessions[switcherCursor].name;
+          switcherRenameInput.focus();
+          switcherRenameInput.select();
+        }
+
+        function finishRename() {
+          var newName = switcherRenameInput.value.trim();
+          var s = switcherSessions[switcherCursor];
+          switcherMode = 'navigate';
+          switcherRename.style.display = 'none';
+          if (!newName || newName === s.name) return;
+
+          fetch('/api/sessions/' + s.id, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: newName })
+          }).then(function() {
+            s.name = newName;
+            renderSwitcherList();
+            // Update bar if renaming current session
+            if (s.id === sessionId && nameEl) nameEl.textContent = newName;
+          });
+        }
+
+        function killSwitcherSession() {
+          if (switcherSessions.length === 0) return;
+          var s = switcherSessions[switcherCursor];
+          fetch('/api/sessions/' + s.id, { method: 'DELETE' })
+            .then(function() {
+              switcherSessions.splice(switcherCursor, 1);
+              if (switcherCursor >= switcherSessions.length && switcherSessions.length > 0) {
+                switcherCursor = switcherSessions.length - 1;
+              }
+              renderSwitcherList();
+              // If we killed the current session, go to sessions list
+              if (s.id === sessionId) {
+                location.href = '/sessions';
+              }
+            });
+        }
+
+        function createSwitcherSession() {
+          fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+            .then(function(r) { return r.json(); })
+            .then(function(s) { location.href = '/terminal?session=' + s.id; });
+        }
+
+        switcherRenameInput.addEventListener('keydown', function(e) {
+          e.stopPropagation();
+          if (e.key === 'Enter') { e.preventDefault(); finishRename(); }
+          if (e.key === 'Escape') { e.preventDefault(); switcherMode = 'navigate'; switcherRename.style.display = 'none'; }
+        });
+
+        // Click overlay backdrop to close
+        switcher.addEventListener('click', function(e) {
+          if (e.target === switcher) closeSwitcher();
+        });
+
+        // Global keyboard handler — use capture phase on window (not document)
+        // so we fire before playground.js's document-level capture handlers.
+        // Use Ctrl+Shift prefix (Ghostty-style) to avoid conflicting with terminal sequences
+        window.addEventListener('keydown', function(e) {
+          // Ctrl+Shift+K to toggle switcher
+          if (e.ctrlKey && e.shiftKey && e.key === 'K') {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            if (switcherOpen) closeSwitcher(); else openSwitcher();
+            return;
+          }
+
+          // Ctrl+Shift+N for new session
+          if (e.ctrlKey && e.shiftKey && e.key === 'N') {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            createSwitcherSession();
+            return;
+          }
+
+          if (!switcherOpen) return;
+          if (switcherMode === 'rename') return;
+
+          // Switcher is open — consume ALL key events so terminal doesn't get them
+          e.preventDefault();
+          e.stopImmediatePropagation();
+
+          switch (e.key) {
+            case 'Escape':
+              closeSwitcher();
+              break;
+            case 'j':
+            case 'ArrowDown':
+              if (switcherCursor < switcherSessions.length - 1) {
+                switcherCursor++;
+                renderSwitcherList();
+              }
+              break;
+            case 'k':
+            case 'ArrowUp':
+              if (switcherCursor > 0) {
+                switcherCursor--;
+                renderSwitcherList();
+              }
+              break;
+            case 'Enter':
+              switchToSelected();
+              break;
+            case 'n':
+              createSwitcherSession();
+              break;
+            case 'r':
+              startSwitcherRename();
+              break;
+            case 'x':
+              killSwitcherSession();
+              break;
+          }
+        }, true);
+
+        // Also block keyup and keypress when switcher is open
+        window.addEventListener('keyup', function(e) {
+          if (switcherOpen) { e.preventDefault(); e.stopImmediatePropagation(); }
+        }, true);
+        window.addEventListener('keypress', function(e) {
+          if (switcherOpen) { e.preventDefault(); e.stopImmediatePropagation(); }
+        }, true);
+
+        // Session bar name: double-click to rename
+        function attachBarRename(el) {
+          el.style.cursor = 'pointer';
+          el.title = 'Double-click to rename';
+          el.addEventListener('dblclick', function handleDblClick() {
+            var current = el.textContent;
+            var input = document.createElement('input');
+            input.type = 'text';
+            input.value = current;
+            input.style.cssText = 'font-size:11px;font-weight:500;color:#4a9eff;background:#0d0d0d;border:1px solid #4a9eff;border-radius:3px;padding:0 4px;outline:none;width:140px;';
+            el.replaceWith(input);
+            input.focus();
+            input.select();
+
+            function finish() {
+              var newName = input.value.trim();
+              var span = document.createElement('span');
+              span.id = 'sessionName';
+              span.textContent = (newName && newName !== current) ? newName : current;
+              input.replaceWith(span);
+              nameEl = span;
+              attachBarRename(span);
+
+              if (newName && newName !== current) {
+                fetch('/api/sessions/' + sessionId, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ name: newName })
+                });
+              }
+            }
+            input.addEventListener('blur', finish);
+            input.addEventListener('keydown', function(ev) {
+              if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); }
+              if (ev.key === 'Escape') { input.value = current; input.blur(); }
+            });
+          });
+        }
+        if (nameEl) attachBarRename(nameEl);
       });
     </script>
   </head>
   <body>
+    <div id="sessionBar" class="session-bar" style="display:none">
+      <span id="sessionName"></span>
+      <div class="session-bar-right">
+        <span class="session-bar-hint">ctrl+shift+k</span>
+        <a href="/sessions" class="session-bar-link">sessions</a>
+      </div>
+    </div>
+
+    <div id="switcher" class="switcher-overlay" style="display:none">
+      <div class="switcher-panel">
+        <div class="switcher-header">
+          <span class="switcher-title">Switch Session</span>
+          <span class="switcher-keys">j/k navigate &middot; enter switch &middot; n new &middot; r rename &middot; x kill &middot; esc close</span>
+        </div>
+        <div id="switcherList" class="switcher-list"></div>
+        <div id="switcherPreview" class="switcher-preview"></div>
+        <div id="switcherRename" class="switcher-rename" style="display:none">
+          <label>Rename: <input id="switcherRenameInput" type="text" autocomplete="off" /></label>
+        </div>
+      </div>
+    </div>
+
     <main id="paneRoot" class="pane-root"></main>
 
     <div class="settings-fab-stack">
@@ -149,18 +508,6 @@
           </div>
         </section>
 
-        <section class="section">
-          <div class="section-title">Demo</div>
-          <div class="field-row">
-            <select id="demoSelect">
-              <option value="basic">Basics</option>
-              <option value="palette">Palette</option>
-              <option value="unicode">Unicode</option>
-              <option value="anim">Animation</option>
-            </select>
-            <button id="btnRunDemo">Run</button>
-          </div>
-        </section>
       </div>
     </dialog>
 

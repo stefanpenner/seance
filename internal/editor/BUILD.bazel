@@ -1,0 +1,37 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+# Copy the platform-specific code-server tarball to the name expected by the embed directive.
+genrule(
+    name = "code_server_archive",
+    srcs = select({
+        "@rules_go//go/platform:darwin_arm64": ["@code_server_macos_arm64//file"],
+        "@rules_go//go/platform:darwin_amd64": ["@code_server_macos_amd64//file"],
+        "@rules_go//go/platform:linux_amd64": ["@code_server_linux_amd64//file"],
+        "@rules_go//go/platform:linux_arm64": ["@code_server_linux_arm64//file"],
+        "//conditions:default": [],
+    }),
+    outs = ["code-server.tar.gz"],
+    cmd = select({
+        "@rules_go//go/platform:darwin_arm64": "cp $< $@",
+        "@rules_go//go/platform:darwin_amd64": "cp $< $@",
+        "@rules_go//go/platform:linux_amd64": "cp $< $@",
+        "@rules_go//go/platform:linux_arm64": "cp $< $@",
+        "//conditions:default": "touch $@",
+    }),
+)
+
+go_library(
+    name = "editor",
+    srcs = [
+        "editor.go",
+    ] + select({
+        "@rules_go//go/platform:darwin_arm64": ["embed_darwin_arm64.go"],
+        "@rules_go//go/platform:darwin_amd64": ["embed_darwin_amd64.go"],
+        "@rules_go//go/platform:linux_amd64": ["embed_linux_amd64.go"],
+        "@rules_go//go/platform:linux_arm64": ["embed_linux_arm64.go"],
+        "//conditions:default": ["embed_stub.go"],
+    }),
+    embedsrcs = [":code_server_archive"],
+    importpath = "seance/internal/editor",
+    visibility = ["//:__subpackages__"],
+)

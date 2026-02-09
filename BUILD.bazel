@@ -1,0 +1,29 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "seance",
+    srcs = [
+        "seance.go",
+        "seance_cli.go",
+    ],
+    embedsrcs = glob(["frontend/**"]),
+    importpath = "seance",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/editor",
+        "//internal/session",
+        "//internal/tui",
+        "@com_github_charmbracelet_bubbletea//:bubbletea",
+        "@com_github_gorilla_websocket//:websocket",
+        "@org_golang_x_term//:term",
+    ],
+)
+
+go_test(
+    name = "seance_test",
+    srcs = ["seance_test.go"],
+    embed = [":seance"],
+    deps = [
+        "//internal/session",
+    ],
+)

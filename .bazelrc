@@ -1,0 +1,5 @@
+# Hermetic Go toolchain
+build --incompatible_strict_action_env
+
+# Test output
+test --test_output=errors

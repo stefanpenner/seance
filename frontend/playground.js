@@ -57462,6 +57462,8 @@ var FONT_URL_OPENMOJI = "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@master/
 var FONT_URL_NOTO_CJK_SC = "https://cdn.jsdelivr.net/gh/notofonts/noto-cjk@main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf";
 var paneStates = new Map;
 var activePaneId = null;
+var currentSessionId = new URLSearchParams(location.search).get("session");
+var restoringLayout = false;
 var resizeRaf = 0;
 var restty;
 var initialFontSize = fontSizeInput?.value ? Number(fontSizeInput.value) : 18;
@@ -57727,7 +57729,8 @@ function createPaneState(id, sourcePane) {
       theme: null
     },
     demos: null,
-    ui: createDefaultPaneUi()
+    ui: createDefaultPaneUi(),
+    sessionId: null
   };
 }
 function getActivePane() {
@@ -57927,8 +57930,43 @@ restty = new Restty({
       connectPaneIfNeeded(pane);
     });
   },
+  onPaneSplit: (sourcePane, createdPane, direction) => {
+    if (restoringLayout)
+      return;
+    const sourceState = paneStates.get(sourcePane.id);
+    const createdState = paneStates.get(createdPane.id);
+    if (!createdState)
+      return;
+    const sourceSessionId = sourceState?.sessionId ?? currentSessionId;
+    if (getConnectionBackend() !== "webcontainer" && sourceSessionId && currentSessionId) {
+      (async () => {
+        try {
+          const resp = await fetch("/api/sessions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              parent_id: currentSessionId,
+              split_from_id: sourceSessionId,
+              split_direction: direction
+            })
+          });
+          if (resp.ok) {
+            const newSession = await resp.json();
+            createdState.sessionId = newSession.id;
+            const proto = location.protocol === "https:" ? "wss:" : "ws:";
+            createdPane.app.connectPty(`${proto}//${location.host}/pty/${newSession.id}`);
+          }
+        } catch (e) {
+          console.error("Failed to create sub-session:", e);
+        }
+      })();
+    }
+  },
   onPaneClosed: (pane) => {
     const state = paneStates.get(pane.id);
+    if (state?.sessionId && state.sessionId !== currentSessionId) {
+      fetch("/api/sessions/" + state.sessionId + "/close", { method: "POST" }).catch(() => {});
+    }
     state?.demos?.stop();
     paneStates.delete(pane.id);
   },
@@ -58155,10 +58193,66 @@ var firstPane = restty.createInitialPane({ focus: true });
 activePaneId = firstPane.id;
 var firstState = paneStates.get(firstPane.id);
 if (firstState) {
+  firstState.sessionId = currentSessionId;
   renderActivePaneStatus(firstPane, firstState);
   renderActivePaneControls(firstPane, firstState);
 }
 queueResizeAllPanes();
+function connectPaneToPty(pane, sessionId) {
+  const state = paneStates.get(pane.id);
+  if (state)
+    state.sessionId = sessionId;
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  pane.app.connectPty(`${proto}//${location.host}/pty/${sessionId}`);
+}
+async function restoreLayout() {
+  if (!currentSessionId || getConnectionBackend() === "webcontainer")
+    return;
+  try {
+    const resp = await fetch("/api/sessions");
+    if (!resp.ok)
+      return;
+    const allSessions = await resp.json();
+    const children = allSessions.filter((s3) => s3.parent_id === currentSessionId).sort((a3, b3) => new Date(a3.created_at).getTime() - new Date(b3.created_at).getTime());
+    if (children.length === 0)
+      return;
+    restoringLayout = true;
+    const sessionToPaneId = new Map;
+    sessionToPaneId.set(currentSessionId, firstPane.id);
+    for (const child of children) {
+      const direction = child.split_direction === "horizontal" ? "horizontal" : "vertical";
+      let sourcePaneId = firstPane.id;
+      if (child.split_from_id && sessionToPaneId.has(child.split_from_id)) {
+        sourcePaneId = sessionToPaneId.get(child.split_from_id);
+      }
+      const newPane = restty.splitPane(sourcePaneId, direction);
+      if (newPane) {
+        sessionToPaneId.set(child.id, newPane.id);
+        await newPane.app.init();
+        connectPaneToPty(newPane, child.id);
+      }
+    }
+    restoringLayout = false;
+    queueResizeAllPanes();
+  } catch (e) {
+    restoringLayout = false;
+    console.error("Failed to restore layout:", e);
+  }
+}
+restoreLayout();
+window.addEventListener("pty-exit", (e) => {
+  const exitedSessionId = e.detail.sessionId;
+  if (!exitedSessionId || exitedSessionId === currentSessionId)
+    return;
+  for (const [paneId, state] of paneStates) {
+    if (state.sessionId === exitedSessionId) {
+      fetch("/api/sessions/" + exitedSessionId + "/close", { method: "POST" }).catch(() => {});
+      state.sessionId = null;
+      restty.closePane(paneId);
+      break;
+    }
+  }
+});
 
-//# debugId=1ACCC011E3F2B2D664756E2164756E21
+//# debugId=96A3E56C60A95A0164756E2164756E21
 //# sourceMappingURL=app.js.map

@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "Bash(bun:*)",
+      "Bash(node:*)",
+      "Bash(npm --version:*)",
+      "Bash(git clone:*)",
+      "Bash(git submodule update:*)",
+      "Bash(go mod init:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(go build:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git remote add:*)",
+      "Bash(git push:*)",
+      "WebSearch",
+      "Bash(go get:*)",
+      "Bash(go test:*)",
+      "Bash(go vet:*)",
+      "WebFetch(domain:ghostty.org)",
+      "Bash(grep:*)",
+      "WebFetch(domain:registry.bazel.build)",
+      "WebFetch(domain:bazel.build)",
+      "WebFetch(domain:dev.to)",
+      "Bash(bazel --version:*)",
+      "Bash(go version:*)",
+      "Bash(bazel test:*)",
+      "Bash(bazel build:*)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:coder.com)",
+      "Bash(gh api:*)"
+    ]
+  }
+}

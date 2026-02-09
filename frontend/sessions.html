@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>seance — sessions</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #1a1b26;
+      color: #c0caf5;
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding-top: min(12vh, 80px);
+    }
+    .panel {
+      width: min(600px, calc(100vw - 32px));
+      background: #1f2335;
+      border: 1px solid #29334d;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      border-bottom: 1px solid #29334d;
+    }
+    .panel-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #bb9af7;
+    }
+    .panel-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .panel-actions a,
+    .panel-actions button {
+      font-size: 11px;
+      padding: 5px 12px;
+      border-radius: 6px;
+      border: 1px solid #29334d;
+      background: #1a1b26;
+      color: #a9b1d6;
+      text-decoration: none;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+      font-family: inherit;
+    }
+    .panel-actions button.primary {
+      background: #7aa2f7;
+      border-color: #7aa2f7;
+      color: #1a1b26;
+      font-weight: 600;
+    }
+    .panel-actions button.primary:hover {
+      background: #89b4fa;
+    }
+    .panel-actions a:hover {
+      color: #c0caf5;
+      border-color: #3b4261;
+    }
+    .session-list {
+      max-height: min(60vh, 480px);
+      overflow-y: auto;
+      padding: 4px 0;
+    }
+    .session-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      cursor: pointer;
+      transition: background 0.1s;
+      font-size: 13px;
+    }
+    .session-item:hover {
+      background: #292e42;
+    }
+    .session-item.selected {
+      background: #283457;
+    }
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot.running { background: #9ece6a; }
+    .dot.exited { background: #f7768e; }
+    .item-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .item-name {
+      color: #c0caf5;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: text;
+    }
+    .session-item.selected .item-name {
+      color: #7aa2f7;
+    }
+    .item-meta {
+      font-size: 10px;
+      color: #565f89;
+      margin-top: 2px;
+    }
+    .item-meta span { margin-right: 10px; }
+    .item-viewers {
+      font-size: 10px;
+      color: #3b4261;
+      white-space: nowrap;
+    }
+    .item-actions {
+      display: flex;
+      gap: 2px;
+      flex-shrink: 0;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .session-item:hover .item-actions,
+    .session-item.selected .item-actions {
+      opacity: 1;
+    }
+    .item-action {
+      height: 24px;
+      padding: 0 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid transparent;
+      background: none;
+      color: #3b4261;
+      font-size: 10px;
+      font-family: inherit;
+      cursor: pointer;
+      border-radius: 4px;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+      flex-shrink: 0;
+    }
+    .item-action:hover {
+      border-color: #29334d;
+      background: #1a1b26;
+    }
+    .item-action.open {
+      color: #9ece6a;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 0 10px;
+      height: 28px;
+    }
+    .item-action.open:hover {
+      color: #9ece6a;
+      border-color: rgba(158, 206, 106, 0.3);
+      background: rgba(158, 206, 106, 0.1);
+    }
+    .item-action.rename:hover {
+      color: #e0af68;
+      border-color: rgba(224, 175, 104, 0.3);
+    }
+    .item-action.kill {
+      color: #f7768e;
+    }
+    .item-action.kill:hover {
+      color: #f7768e;
+      background: rgba(247, 118, 142, 0.1);
+      border-color: rgba(247, 118, 142, 0.3);
+    }
+    .preview {
+      border-top: 1px solid #29334d;
+      padding: 10px 14px;
+      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 10px;
+      line-height: 1.5;
+      color: #565f89;
+      background: #16161e;
+      min-height: 80px;
+      max-height: 200px;
+      overflow: hidden;
+      white-space: pre;
+    }
+    .preview:empty::after {
+      content: "no output";
+      color: #3b4261;
+    }
+    .empty-state {
+      padding: 60px 20px;
+      text-align: center;
+      color: #565f89;
+    }
+    .empty-state p { margin-bottom: 16px; font-size: 13px; }
+    .empty-state button {
+      padding: 8px 20px;
+      font-size: 12px;
+      font-weight: 600;
+      background: #7aa2f7;
+      color: #1a1b26;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .empty-state button:hover { background: #89b4fa; }
+    .footer-keys {
+      padding: 8px 16px;
+      border-top: 1px solid #29334d;
+      font-size: 9px;
+      color: #3b4261;
+      text-align: center;
+    }
+    .item-name-input {
+      font-size: 13px;
+      font-weight: 500;
+      color: #c0caf5;
+      background: #16161e;
+      border: 1px solid #7aa2f7;
+      border-radius: 4px;
+      padding: 2px 6px;
+      outline: none;
+      width: 200px;
+      font-family: inherit;
+    }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <div class="panel-header">
+      <span class="panel-title">seance</span>
+      <div class="panel-actions">
+        <button class="primary" id="newSession">New Session</button>
+        <a href="/logout">logout</a>
+      </div>
+    </div>
+
+    <div id="empty" class="empty-state" style="display:none">
+      <p>No sessions yet</p>
+      <button id="newSessionEmpty">Create your first session</button>
+    </div>
+    <div id="sessionList" class="session-list"></div>
+    <div id="preview" class="preview"></div>
+    <div class="footer-keys">click select &middot; enter/dblclick open &middot; j/k navigate &middot; n new &middot; r rename &middot; x kill</div>
+  </div>
+
+  <script>
+    var sessionList = document.getElementById('sessionList');
+    var emptyState = document.getElementById('empty');
+    var previewEl = document.getElementById('preview');
+    var sessions = [];
+    var cursor = 0;
+    var mode = 'navigate'; // 'navigate' | 'rename'
+    var refreshTimer;
+
+    function escapeHtml(str) {
+      var d = document.createElement('div');
+      d.textContent = str;
+      return d.innerHTML;
+    }
+
+    function timeAgo(dateStr) {
+      var sec = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+      if (sec < 60) return 'now';
+      var min = Math.floor(sec / 60);
+      if (min < 60) return min + 'm ago';
+      var hr = Math.floor(min / 60);
+      if (hr < 24) return hr + 'h ago';
+      return Math.floor(hr / 24) + 'd ago';
+    }
+
+    function stripAnsi(str) {
+      return str.replace(/\x1b\[[\x20-\x3f]*[\x40-\x7e]/g, '')
+                .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+                .replace(/\x1b[()][0-9A-B]/g, '')
+                .replace(/\x1b[\x20-\x2f]*[\x30-\x7e]/g, '')
+                .replace(/[\x00-\x08\x0e-\x1f\x7f]/g, '');
+    }
+
+    function createSession() {
+      fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+        .then(function(r) { return r.json(); })
+        .then(function() { loadSessions(); });
+    }
+
+    function renderList() {
+      if (!sessions.length) {
+        sessionList.innerHTML = '';
+        emptyState.style.display = '';
+        previewEl.textContent = '';
+        return;
+      }
+      emptyState.style.display = 'none';
+
+      sessionList.innerHTML = sessions.map(function(s, i) {
+        var cls = 'session-item';
+        if (i === cursor) cls += ' selected';
+        var status = s.exited ? 'exited' : 'running';
+        var statusText = s.exited ? 'exited(' + (s.exit_code || 0) + ')' : 'running';
+        var viewers = s.viewers > 0 ? s.viewers + 'v' : '';
+        return '<div class="' + cls + '" data-idx="' + i + '">' +
+          '<div class="dot ' + status + '"></div>' +
+          '<div class="item-info">' +
+            '<div class="item-name">' + escapeHtml(s.name) + '</div>' +
+            '<div class="item-meta">' +
+              '<span>' + escapeHtml(s.shell) + '</span>' +
+              '<span>' + timeAgo(s.created_at) + '</span>' +
+              '<span>' + statusText + '</span>' +
+            '</div>' +
+          '</div>' +
+          (viewers ? '<span class="item-viewers">' + viewers + '</span>' : '') +
+          '<div class="item-actions">' +
+            '<button class="item-action open" data-idx="' + i + '" title="Join">join</button>' +
+            '<button class="item-action rename" data-idx="' + i + '" title="Rename">&#9998;</button>' +
+            '<button class="item-action kill" data-idx="' + i + '" title="Kill">&#10005;</button>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+
+      sessionList.querySelectorAll('.session-item').forEach(function(el) {
+        el.addEventListener('click', function(e) {
+          if (e.target.closest('.item-action')) return;
+          cursor = parseInt(el.dataset.idx);
+          renderList();
+        });
+        el.addEventListener('dblclick', function(e) {
+          if (e.target.closest('.item-action')) return;
+          cursor = parseInt(el.dataset.idx);
+          if (e.target.closest('.item-name')) {
+            startRename();
+          } else {
+            openSelected();
+          }
+        });
+      });
+      sessionList.querySelectorAll('.item-action.open').forEach(function(el) {
+        el.addEventListener('click', function(e) {
+          e.stopPropagation();
+          cursor = parseInt(el.dataset.idx);
+          openSelected();
+        });
+      });
+      sessionList.querySelectorAll('.item-action.rename').forEach(function(el) {
+        el.addEventListener('click', function(e) {
+          e.stopPropagation();
+          cursor = parseInt(el.dataset.idx);
+          startRename();
+        });
+      });
+      sessionList.querySelectorAll('.item-action.kill').forEach(function(el) {
+        el.addEventListener('click', function(e) {
+          e.stopPropagation();
+          killSession(parseInt(el.dataset.idx));
+        });
+      });
+
+      loadPreview();
+    }
+
+    function loadPreview() {
+      if (!sessions.length) { previewEl.textContent = ''; return; }
+      var s = sessions[cursor];
+      if (!s) return;
+      fetch('/api/sessions/' + s.id + '/preview')
+        .then(function(r) { return r.text(); })
+        .then(function(text) {
+          var clean = stripAnsi(text);
+          var lines = clean.split('\n');
+          if (lines.length > 16) lines = lines.slice(-16);
+          previewEl.textContent = lines.join('\n');
+        })
+        .catch(function() { previewEl.textContent = ''; });
+    }
+
+    function openSelected() {
+      if (!sessions.length) return;
+      location.href = '/terminal?session=' + sessions[cursor].id;
+    }
+
+    function killSession(idx) {
+      var s = sessions[idx];
+      fetch('/api/sessions/' + s.id, { method: 'DELETE' })
+        .then(function() {
+          sessions.splice(idx, 1);
+          if (cursor >= sessions.length && sessions.length > 0) cursor = sessions.length - 1;
+          renderList();
+        });
+    }
+
+    function startRename() {
+      if (!sessions.length) return;
+      mode = 'rename';
+      var nameEl = sessionList.querySelector('.session-item.selected .item-name');
+      if (!nameEl) return;
+      var s = sessions[cursor];
+      var input = document.createElement('input');
+      input.className = 'item-name-input';
+      input.value = s.name;
+      nameEl.replaceWith(input);
+      input.focus();
+      input.select();
+      input.addEventListener('keydown', function(e) {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); finishRename(input); }
+        if (e.key === 'Escape') { e.preventDefault(); mode = 'navigate'; renderList(); }
+      });
+      input.addEventListener('blur', function() {
+        if (mode === 'rename') finishRename(input);
+      });
+    }
+
+    function finishRename(input) {
+      var newName = input.value.trim();
+      var s = sessions[cursor];
+      mode = 'navigate';
+      if (!newName || newName === s.name) { renderList(); return; }
+      fetch('/api/sessions/' + s.id, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName })
+      }).then(function() {
+        s.name = newName;
+        renderList();
+      });
+    }
+
+    function loadSessions() {
+      fetch('/api/sessions')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          sessions = (data || [])
+            .filter(function(s) { return !s.parent_id; })
+            .sort(function(a, b) {
+              return new Date(a.created_at) - new Date(b.created_at);
+            });
+          if (cursor >= sessions.length && sessions.length > 0) cursor = sessions.length - 1;
+          renderList();
+        });
+    }
+
+    document.addEventListener('keydown', function(e) {
+      if (mode === 'rename') return;
+
+      switch (e.key) {
+        case 'j':
+        case 'ArrowDown':
+          e.preventDefault();
+          if (cursor < sessions.length - 1) { cursor++; renderList(); }
+          break;
+        case 'k':
+        case 'ArrowUp':
+          e.preventDefault();
+          if (cursor > 0) { cursor--; renderList(); }
+          break;
+        case 'Enter':
+          e.preventDefault();
+          openSelected();
+          break;
+        case 'n':
+          e.preventDefault();
+          createSession();
+          break;
+        case 'r':
+          e.preventDefault();
+          startRename();
+          break;
+        case 'x':
+          e.preventDefault();
+          if (sessions.length > 0) killSession(cursor);
+          break;
+      }
+    });
+
+    document.getElementById('newSession').addEventListener('click', createSession);
+    document.getElementById('newSessionEmpty').addEventListener('click', createSession);
+
+    loadSessions();
+    refreshTimer = setInterval(loadSessions, 5000);
+  </script>
+</body>
+</html>

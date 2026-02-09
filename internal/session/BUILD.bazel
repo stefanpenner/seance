@@ -1,0 +1,18 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "session",
+    srcs = ["session.go"],
+    importpath = "seance/internal/session",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "@com_github_creack_pty//:pty",
+        "@com_github_gorilla_websocket//:websocket",
+    ],
+)
+
+go_test(
+    name = "session_test",
+    srcs = ["session_test.go"],
+    embed = [":session"],
+)
