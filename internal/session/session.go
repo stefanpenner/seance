@@ -152,10 +152,13 @@ type Terminal struct {
 	viewers  map[string]*Viewer
 }
 
-func newTerminal(id, name, shell string, cols, rows uint16, env []string, bufSize int) (*Terminal, error) {
+func newTerminal(id, name, shell string, cols, rows uint16, env []string, bufSize int, cwd string) (*Terminal, error) {
 	parts := strings.Fields(shell)
 	cmd := exec.Command(parts[0], parts[1:]...)
 	cmd.Env = env
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
 		Cols: cols,
@@ -356,7 +359,7 @@ func NewManager() *Manager {
 	}
 }
 
-func (m *Manager) Create(name, shell string, cols, rows uint16, env []string, parentID string) (*Terminal, error) {
+func (m *Manager) Create(name, shell string, cols, rows uint16, env []string, parentID string, cwd string) (*Terminal, error) {
 	b := make([]byte, 8)
 	rand.Read(b)
 	id := hex.EncodeToString(b)
@@ -368,7 +371,7 @@ func (m *Manager) Create(name, shell string, cols, rows uint16, env []string, pa
 	}
 	m.mu.Unlock()
 
-	s, err := newTerminal(id, name, shell, cols, rows, env, m.bufSize)
+	s, err := newTerminal(id, name, shell, cols, rows, env, m.bufSize, cwd)
 	if err != nil {
 		return nil, err
 	}

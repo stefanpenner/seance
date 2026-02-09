@@ -187,23 +187,6 @@
       background: rgba(247, 118, 142, 0.1);
       border-color: rgba(247, 118, 142, 0.3);
     }
-    .preview {
-      border-top: 1px solid #29334d;
-      padding: 10px 14px;
-      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 10px;
-      line-height: 1.5;
-      color: #565f89;
-      background: #16161e;
-      min-height: 80px;
-      max-height: 200px;
-      overflow: hidden;
-      white-space: pre;
-    }
-    .preview:empty::after {
-      content: "no output";
-      color: #3b4261;
-    }
     .empty-state {
       padding: 60px 20px;
       text-align: center;
@@ -250,7 +233,6 @@
       <div class="panel-actions">
         <a href="/editor/" class="editor-link">Editor</a>
         <button class="primary" id="newSession">New Session</button>
-        <a href="/logout">logout</a>
       </div>
     </div>
 
@@ -259,14 +241,12 @@
       <button id="newSessionEmpty">Create your first session</button>
     </div>
     <div id="sessionList" class="session-list"></div>
-    <div id="preview" class="preview"></div>
-    <div class="footer-keys">click select &middot; enter/dblclick open &middot; j/k navigate &middot; n new &middot; r rename &middot; x kill</div>
+    <div class="footer-keys">click select &middot; enter/dblclick open &middot; j/k navigate &middot; n new &middot; r rename &middot; x kill &middot; l logout</div>
   </div>
 
   <script>
     var sessionList = document.getElementById('sessionList');
     var emptyState = document.getElementById('empty');
-    var previewEl = document.getElementById('preview');
     var sessions = [];
     var cursor = 0;
     var mode = 'navigate'; // 'navigate' | 'rename'
@@ -288,14 +268,6 @@
       return Math.floor(hr / 24) + 'd ago';
     }
 
-    function stripAnsi(str) {
-      return str.replace(/\x1b\[[\x20-\x3f]*[\x40-\x7e]/g, '')
-                .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
-                .replace(/\x1b[()][0-9A-B]/g, '')
-                .replace(/\x1b[\x20-\x2f]*[\x30-\x7e]/g, '')
-                .replace(/[\x00-\x08\x0e-\x1f\x7f]/g, '');
-    }
-
     function createSession() {
       fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
         .then(function(r) { return r.json(); })
@@ -306,7 +278,6 @@
       if (!sessions.length) {
         sessionList.innerHTML = '';
         emptyState.style.display = '';
-        previewEl.textContent = '';
         return;
       }
       emptyState.style.display = 'none';
@@ -373,22 +344,6 @@
         });
       });
 
-      loadPreview();
-    }
-
-    function loadPreview() {
-      if (!sessions.length) { previewEl.textContent = ''; return; }
-      var s = sessions[cursor];
-      if (!s) return;
-      fetch('/api/sessions/' + s.id + '/preview')
-        .then(function(r) { return r.text(); })
-        .then(function(text) {
-          var clean = stripAnsi(text);
-          var lines = clean.split('\n');
-          if (lines.length > 16) lines = lines.slice(-16);
-          previewEl.textContent = lines.join('\n');
-        })
-        .catch(function() { previewEl.textContent = ''; });
     }
 
     function openSelected() {
@@ -486,6 +441,10 @@
         case 'x':
           e.preventDefault();
           if (sessions.length > 0) killSession(cursor);
+          break;
+        case 'l':
+          e.preventDefault();
+          location.href = '/logout';
           break;
       }
     });

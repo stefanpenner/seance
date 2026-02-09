@@ -36,10 +36,12 @@ const (
 type LogLine string
 
 // LogWriter is an io.Writer that sends log lines to the TUI program.
+// Lines received before SetProgram is called are buffered and replayed.
 type LogWriter struct {
 	mu      sync.Mutex
 	program *tea.Program
 	buf     []byte
+	pending []string // lines buffered before program is set
 }
 
 func NewLogWriter() *LogWriter {
@@ -49,15 +51,25 @@ func NewLogWriter() *LogWriter {
 func (w *LogWriter) SetProgram(p *tea.Program) {
 	w.mu.Lock()
 	w.program = p
+	pending := w.pending
+	w.pending = nil
 	w.mu.Unlock()
+
+	// Replay in a goroutine: p.Send blocks on bubbletea's unbuffered
+	// channel until p.Run() starts the event loop.
+	if len(pending) > 0 {
+		go func() {
+			for _, line := range pending {
+				p.Send(LogLine(line))
+			}
+		}()
+	}
 }
 
 func (w *LogWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
-	prog := w.program
-	w.mu.Unlock()
-
 	w.buf = append(w.buf, p...)
+	var toSend []string
 	for {
 		idx := -1
 		for i, b := range w.buf {
@@ -71,17 +83,25 @@ func (w *LogWriter) Write(p []byte) (int, error) {
 		}
 		line := string(w.buf[:idx])
 		w.buf = w.buf[idx+1:]
-		if prog != nil {
-			prog.Send(LogLine(line))
+		if w.program != nil {
+			toSend = append(toSend, line)
+		} else {
+			w.pending = append(w.pending, line)
 		}
+	}
+	prog := w.program
+	w.mu.Unlock()
+
+	// Send outside the lock — p.Send() may block briefly until
+	// the bubbletea event loop starts consuming messages.
+	for _, line := range toSend {
+		prog.Send(LogLine(line))
 	}
 	return len(p), nil
 }
 
 type Model struct {
-	mgr      *session.Manager
-	shell    string
-	childEnv []string
+	provider SessionProvider
 	sessions []session.Info
 	cursor   int
 	width    int
@@ -94,12 +114,11 @@ type Model struct {
 	renameID  string
 	input     textinput.Model
 
-	logLines  []string
-	logMax    int
-	logScroll int // scroll offset for log pane (0 = bottom)
-	focus     pane
-
-	serverURL string
+	logLines       []string
+	logMax         int
+	logScroll      int // scroll offset for log pane (0 = bottom)
+	logVisibleRows int // cached from last layout for scroll clamping
+	focus          pane
 
 	// Vim gg/GG
 	pendingG  bool
@@ -112,23 +131,16 @@ type tickMsg time.Time
 
 func (e errMsg) Error() string { return e.err.Error() }
 
-func NewModel(mgr *session.Manager, shell string, childEnv []string) Model {
+func NewModel(provider SessionProvider) Model {
 	ti := textinput.New()
 	ti.CharLimit = 64
 	return Model{
-		mgr:      mgr,
-		shell:    shell,
-		childEnv: childEnv,
+		provider: provider,
 		loading:  true,
 		input:    ti,
 		logMax:   500,
 		focus:    paneSessions,
 	}
-}
-
-// SetServerURL sets the URL shown in the TUI header.
-func (m *Model) SetServerURL(url string) {
-	m.serverURL = url
 }
 
 func (m Model) Init() tea.Cmd {
@@ -143,7 +155,11 @@ func tickCmd() tea.Cmd {
 
 func (m Model) fetchSessions() tea.Cmd {
 	return func() tea.Msg {
-		return sessionsMsg(m.mgr.List())
+		list, err := m.provider.List()
+		if err != nil {
+			return errMsg{err}
+		}
+		return sessionsMsg(list)
 	}
 }
 
@@ -152,12 +168,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		// Cache log visible rows for scroll clamping (mirrors View layout)
+		logH := m.height / 4
+		if logH < 4 {
+			logH = 4
+		}
+		if logH > 16 {
+			logH = 16
+		}
+		m.logVisibleRows = logH - 1 // minus log header
+		if m.logVisibleRows < 1 {
+			m.logVisibleRows = 1
+		}
 
 	case sessionsMsg:
 		m.sessions = msg
 		m.loading = false
 		m.err = nil
-		if m.cursor >= len(m.sessions) && len(m.sessions) > 0 {
+		if len(m.sessions) == 0 {
+			m.cursor = 0
+		} else if m.cursor >= len(m.sessions) {
 			m.cursor = len(m.sessions) - 1
 		}
 
@@ -216,7 +246,7 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.focus == paneSessions {
 				m.cursor = 0
 			} else {
-				m.logScroll = max(0, len(m.logLines)-1)
+				m.logScroll = max(0, len(m.logLines)-m.logVisibleRows)
 			}
 			return m, nil
 		}
@@ -260,21 +290,24 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, keys.New):
 		return m, func() tea.Msg {
-			_, err := m.mgr.Create("", m.shell, 80, 24, m.childEnv, "")
+			if _, err := m.provider.Create("", "", 80, 24, nil, ""); err != nil {
+				return errMsg{err}
+			}
+			list, err := m.provider.List()
 			if err != nil {
 				return errMsg{err}
 			}
-			return sessionsMsg(m.mgr.List())
+			return sessionsMsg(list)
 		}
 
 	case key.Matches(msg, keys.Kill):
-		if len(m.sessions) > 0 {
+		if len(m.sessions) > 0 && m.cursor < len(m.sessions) {
 			m.mode = modeConfirmKill
 			m.confirmID = m.sessions[m.cursor].ID
 		}
 
 	case key.Matches(msg, keys.Rename):
-		if len(m.sessions) > 0 {
+		if len(m.sessions) > 0 && m.cursor < len(m.sessions) {
 			m.mode = modeRename
 			m.renameID = m.sessions[m.cursor].ID
 			m.input.SetValue(m.sessions[m.cursor].Name)
@@ -286,9 +319,15 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateLogPane(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	maxScroll := len(m.logLines) - m.logVisibleRows
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
 	switch {
 	case key.Matches(msg, keys.Up):
-		m.logScroll++
+		if m.logScroll < maxScroll {
+			m.logScroll++
+		}
 	case key.Matches(msg, keys.Down):
 		if m.logScroll > 0 {
 			m.logScroll--
@@ -304,10 +343,14 @@ func (m Model) updateConfirmKill(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeNormal
 		m.confirmID = ""
 		return m, func() tea.Msg {
-			if err := m.mgr.Kill(id); err != nil {
+			if err := m.provider.Kill(id); err != nil {
 				return errMsg{err}
 			}
-			return sessionsMsg(m.mgr.List())
+			list, err := m.provider.List()
+			if err != nil {
+				return errMsg{err}
+			}
+			return sessionsMsg(list)
 		}
 
 	case key.Matches(msg, keys.Escape), key.Matches(msg, keys.Quit):
@@ -326,10 +369,14 @@ func (m Model) updateRename(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.renameID = ""
 		m.input.Blur()
 		return m, func() tea.Msg {
-			if err := m.mgr.Rename(id, name); err != nil {
+			if err := m.provider.Rename(id, name); err != nil {
 				return errMsg{err}
 			}
-			return sessionsMsg(m.mgr.List())
+			list, err := m.provider.List()
+			if err != nil {
+				return errMsg{err}
+			}
+			return sessionsMsg(list)
 		}
 
 	case key.Matches(msg, keys.Escape):
@@ -358,17 +405,17 @@ func (m Model) View() string {
 	}
 	totalWidth := width - horizontalPad*2
 
-	// Layout:
-	// 1 line: header (URL + title)
-	// 1 line: top border
-	// N lines: content (sessions left + details right)
-	// 1 line: mid border
-	// M lines: log pane
-	// 1 line: bottom border
+	// Layout: two separate boxes stacked vertically
+	// 1 line: header
+	// 1 line: sessions top border  ╭──┬──╮
+	// N lines: sessions content    │  │  │
+	// 1 line: sessions bot border  ╰──┴──╯
+	// 1 line: log top border       ╭─────╮
+	// M lines: log content         │     │
+	// 1 line: log bot border       ╰─────╯
 	// 1 line: footer
 
-	headerLines := 2 // header + top border
-	footerLines := 2 // bottom border + footer
+	fixedLines := 1 + 2 + 2 + 1 // header + 2 session borders + 2 log borders + footer
 	logHeight := m.height / 4
 	if logHeight < 4 {
 		logHeight = 4
@@ -376,7 +423,7 @@ func (m Model) View() string {
 	if logHeight > 16 {
 		logHeight = 16
 	}
-	contentHeight := m.height - headerLines - footerLines - logHeight - 1 // 1 for mid border
+	contentHeight := m.height - fixedLines - logHeight
 	if contentHeight < 4 {
 		contentHeight = 4
 	}
@@ -387,17 +434,26 @@ func (m Model) View() string {
 	}
 	rightWidth := totalWidth - leftWidth - 1 // 1 for separator
 
+	// Pick border styles based on focused pane
+	sessBorder := borderStyle
+	logBorder := borderStyle
+	if m.focus == paneSessions {
+		sessBorder = borderActiveStyle
+	} else {
+		logBorder = borderActiveStyle
+	}
+
 	var b strings.Builder
 
 	// Header line
 	b.WriteString(m.renderHeader(totalWidth))
 	b.WriteString("\n")
 
-	// Top border
-	b.WriteString(borderStyle.Render("╭" + strings.Repeat("─", leftWidth) + "┬" + strings.Repeat("─", rightWidth) + "╮"))
+	// Sessions box — top border
+	b.WriteString(sessBorder.Render("╭" + strings.Repeat("─", leftWidth) + "┬" + strings.Repeat("─", rightWidth) + "╮"))
 	b.WriteString("\n")
 
-	// Content: sessions list + details
+	// Sessions box — content
 	leftLines := m.renderListLines(leftWidth, contentHeight)
 	rightLines := m.renderDetailLines(rightWidth, contentHeight)
 
@@ -410,38 +466,33 @@ func (m Model) View() string {
 		if i < len(rightLines) {
 			right = rightLines[i]
 		}
-		b.WriteString(borderStyle.Render("│"))
+		b.WriteString(sessBorder.Render("│"))
 		b.WriteString(left)
 		b.WriteString(separatorStyle.Render("│"))
 		b.WriteString(right)
-		b.WriteString(borderStyle.Render("│"))
+		b.WriteString(sessBorder.Render("│"))
 		b.WriteString("\n")
 	}
 
-	// Mid border between content and logs
-	focusIndicator := "─"
-	if m.focus == paneLogs {
-		focusIndicator = "═"
-	}
-	logBorder := strings.Repeat(focusIndicator, totalWidth-2)
-	if m.focus == paneLogs {
-		b.WriteString(borderStyle.Render("╞") + borderStyle.Render(logBorder) + borderStyle.Render("╡"))
-	} else {
-		b.WriteString(borderStyle.Render("├") + borderStyle.Render(strings.Repeat("─", totalWidth-2)) + borderStyle.Render("┤"))
-	}
+	// Sessions box — bottom border
+	b.WriteString(sessBorder.Render("╰" + strings.Repeat("─", leftWidth) + "┴" + strings.Repeat("─", rightWidth) + "╯"))
 	b.WriteString("\n")
 
-	// Log pane
+	// Log box — top border
+	b.WriteString(logBorder.Render("╭" + strings.Repeat("─", totalWidth-2) + "╮"))
+	b.WriteString("\n")
+
+	// Log box — content
 	logLines := m.renderLogLines(totalWidth-2, logHeight)
 	for _, line := range logLines {
-		b.WriteString(borderStyle.Render("│"))
+		b.WriteString(logBorder.Render("│"))
 		b.WriteString(line)
-		b.WriteString(borderStyle.Render("│"))
+		b.WriteString(logBorder.Render("│"))
 		b.WriteString("\n")
 	}
 
-	// Bottom border
-	b.WriteString(borderStyle.Render("╰" + strings.Repeat("─", totalWidth-2) + "╯"))
+	// Log box — bottom border
+	b.WriteString(logBorder.Render("╰" + strings.Repeat("─", totalWidth-2) + "╯"))
 	b.WriteString("\n")
 
 	// Footer
@@ -452,16 +503,17 @@ func (m Model) View() string {
 
 func (m Model) renderHeader(width int) string {
 	title := headerStyle.Render("seance")
+	serverURL := m.provider.ServerURL()
 	url := ""
-	if m.serverURL != "" {
-		url = urlStyle.Render(m.serverURL)
+	if serverURL != "" {
+		url = urlStyle.Render(serverURL)
 	}
 	count := dimStyle.Render(fmt.Sprintf("%d sessions", len(m.sessions)))
 
 	// title + count on left, url on right
 	leftPlain := fmt.Sprintf("seance  %d sessions", len(m.sessions))
 	left := title + "  " + count
-	rightPlain := m.serverURL
+	rightPlain := serverURL
 
 	gap := width - len(leftPlain) - len(rightPlain)
 	if gap < 2 {
@@ -692,15 +744,6 @@ func (m Model) renderLogLines(width, height int) []string {
 	startIdx := endIdx - visibleLines
 	if startIdx < 0 {
 		startIdx = 0
-	}
-
-	// Clamp logScroll
-	maxScroll := totalLogs - visibleLines
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if m.logScroll > maxScroll {
-		m.logScroll = maxScroll
 	}
 
 	needsScroll := totalLogs > visibleLines

@@ -29,6 +29,9 @@ var (
 	borderStyle = lipgloss.NewStyle().
 			Foreground(colorBorder)
 
+	borderActiveStyle = lipgloss.NewStyle().
+				Foreground(colorBlue)
+
 	separatorStyle = lipgloss.NewStyle().
 			Foreground(colorGutter)
 

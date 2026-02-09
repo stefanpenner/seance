@@ -1,6 +1,7 @@
 package seance
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -9,17 +10,19 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"sync"
-	"slices"
 	"syscall"
 	"text/tabwriter"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gorilla/websocket"
 	"golang.org/x/term"
 
 	"seance/internal/session"
+	"seance/internal/tui"
 )
 
 type cliConfig struct {
@@ -355,4 +358,64 @@ func RunStop() {
 		fmt.Fprintf(os.Stderr, "error: unexpected status %d\n", resp.StatusCode)
 		os.Exit(1)
 	}
+}
+
+// RunTUI launches the Bubbletea TUI connected to an already-running daemon.
+func RunTUI() {
+	cc := loadCLIConfig()
+	baseURL := "https://" + cc.addr
+	client := newCLIClient(cc)
+	// Remove timeout — SSE log stream is long-lived
+	client.Timeout = 0
+
+	if err := authenticate(client, baseURL, cc.password); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Quick health check — make sure the daemon is reachable
+	resp, err := client.Get(baseURL + "/api/sessions")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: cannot reach daemon at %s: %v\n", baseURL, err)
+		os.Exit(1)
+	}
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		fmt.Fprintln(os.Stderr, "error: unauthorized (check SEANCE_PASSWORD)")
+		os.Exit(1)
+	}
+
+	provider := tui.NewRemoteProvider(client, baseURL)
+	model := tui.NewModel(provider)
+	p := tea.NewProgram(model, tea.WithAltScreen())
+
+	// Stream logs from daemon via SSE
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		for {
+			if err := provider.SubscribeLogs(ctx, p); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				// Reconnect after brief pause
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			return
+		}
+	}()
+
+	// Handle SIGINT/SIGTERM — quit TUI gracefully
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		p.Send(tea.Quit())
+	}()
+
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "tui error: %v\n", err)
+	}
+	// TUI exited — just disconnect, do NOT kill sessions or stop daemon
 }

@@ -15,48 +15,21 @@ jobs:
     strategy:
       matrix:
         include:
-          # Lite variants (no code-server)
           - platform: linux_amd64
-            variant: lite
-            target: //cmd:run_lite
+            target: //cmd:run
             binary: seance-linux-amd64
-            bin_path: bazel-bin/cmd/run_lite_/run_lite
+            bin_path: bazel-bin/cmd/run_/run
           - platform: linux_arm64
-            variant: lite
-            target: //cmd:run_lite
+            target: //cmd:run
             binary: seance-linux-arm64
-            bin_path: bazel-bin/cmd/run_lite_/run_lite
+            bin_path: bazel-bin/cmd/run_/run
           - platform: darwin_amd64
-            variant: lite
-            target: //cmd:run_lite
+            target: //cmd:run
             binary: seance-darwin-amd64
-            bin_path: bazel-bin/cmd/run_lite_/run_lite
+            bin_path: bazel-bin/cmd/run_/run
           - platform: darwin_arm64
-            variant: lite
-            target: //cmd:run_lite
+            target: //cmd:run
             binary: seance-darwin-arm64
-            bin_path: bazel-bin/cmd/run_lite_/run_lite
-
-          # Full variants (with code-server)
-          - platform: linux_amd64
-            variant: full
-            target: //cmd:run
-            binary: seance-linux-amd64-full
-            bin_path: bazel-bin/cmd/run_/run
-          - platform: linux_arm64
-            variant: full
-            target: //cmd:run
-            binary: seance-linux-arm64-full
-            bin_path: bazel-bin/cmd/run_/run
-          - platform: darwin_amd64
-            variant: full
-            target: //cmd:run
-            binary: seance-darwin-amd64-full
-            bin_path: bazel-bin/cmd/run_/run
-          - platform: darwin_arm64
-            variant: full
-            target: //cmd:run
-            binary: seance-darwin-arm64-full
             bin_path: bazel-bin/cmd/run_/run
 
     steps:

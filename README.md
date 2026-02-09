@@ -103,3 +103,19 @@ bazel run //cmd:run -- stop               shut down a running daemon
 | `SEANCE_TLS_CERT` | *auto* | TLS cert path |
 | `SEANCE_TLS_KEY` | *auto* | TLS key path |
 | `SEANCE_BUFFER_SIZE` | `1048576` | scrollback per session |
+| `NGROK_AUTHTOKEN` | | ngrok auth token (for `--ngrok`) |
+
+### Flags
+
+| Flag | |
+|---|---|
+| `--no-password` | Disable authentication |
+| `--ngrok` | Start an ngrok tunnel for remote access |
+
+### Remote access with ngrok
+
+```sh
+NGROK_AUTHTOKEN=<token> SEANCE_PASSWORD=secret bazel run //cmd:run -- --ngrok
+```
+
+This starts the local server as usual and also opens an ngrok tunnel. The public URL is printed in the logs and shown in the TUI.

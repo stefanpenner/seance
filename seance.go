@@ -32,8 +32,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gorilla/websocket"
+	"golang.ngrok.com/ngrok/v2"
 
-	"seance/internal/editor"
 	"seance/internal/session"
 	"seance/internal/tui"
 )
@@ -85,9 +85,9 @@ type config struct {
 	certFile   string
 	keyFile    string
 	shell      string
+	cwd        string
 	noPassword bool
-	noEditor   bool
-	editorDir  string
+	ngrok      bool
 }
 
 func hasFlag(name string) bool {
@@ -99,6 +99,37 @@ func hasFlag(name string) bool {
 	return false
 }
 
+func getFlag(name string) string {
+	args := os.Args[1:]
+	prefix := name + "="
+	for i, arg := range args {
+		if strings.HasPrefix(arg, prefix) {
+			return arg[len(prefix):]
+		}
+		if arg == name && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+func expandHome(path string) string {
+	if path == "" || path[0] != '~' {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	if len(path) == 1 {
+		return home
+	}
+	if path[1] == '/' {
+		return filepath.Join(home, path[2:])
+	}
+	return path
+}
+
 func loadConfig() config {
 	c := config{
 		password:   os.Getenv("SEANCE_PASSWORD"),
@@ -106,10 +137,14 @@ func loadConfig() config {
 		certFile:   os.Getenv("SEANCE_TLS_CERT"),
 		keyFile:    os.Getenv("SEANCE_TLS_KEY"),
 		shell:      os.Getenv("SEANCE_SHELL"),
+		cwd:        getFlag("--cwd"),
 		noPassword: hasFlag("--no-password"),
-		noEditor:   hasFlag("--no-editor"),
-		editorDir:  os.Getenv("SEANCE_EDITOR_DIR"),
+		ngrok:      hasFlag("--ngrok"),
 	}
+	if c.cwd == "" {
+		c.cwd = os.Getenv("SEANCE_CWD")
+	}
+	c.cwd = expandHome(c.cwd)
 	if c.password == "" && !c.noPassword {
 		fmt.Fprintln(os.Stderr, "SEANCE_PASSWORD is required (or use --no-password)")
 		os.Exit(1)
@@ -152,15 +187,16 @@ func getSessionToken(r *http.Request) string {
 }
 
 type serverInstance struct {
-	server      *http.Server
-	listener    net.Listener
-	mgr         *session.Manager
-	sess        *sessions
-	addr        net.Addr
-	editorProxy *editor.EditorProxy
+	server   *http.Server
+	listener net.Listener
+	mgr      *session.Manager
+	sess     *sessions
+	addr     net.Addr
+	ngrokURL string
+	ngrokLn  net.Listener
 }
 
-func startServer(cfg config) (*serverInstance, error) {
+func startServer(cfg config, hub *logHub) (*serverInstance, error) {
 	sess := newSessions()
 	mgr := session.NewManager()
 
@@ -169,12 +205,7 @@ func startServer(cfg config) (*serverInstance, error) {
 		return nil, fmt.Errorf("frontend: %w", err)
 	}
 
-	var editorProxy *editor.EditorProxy
-	if !cfg.noEditor && editor.Available() {
-		editorProxy = editor.NewEditorProxy()
-	}
-
-	mux := setupMux(cfg, sess, mgr, frontendContent, editorProxy)
+	mux := setupMux(cfg, sess, mgr, frontendContent, hub)
 
 	tlsCfg, err := getTLSConfig(cfg)
 	if err != nil {
@@ -198,18 +229,42 @@ func startServer(cfg config) (*serverInstance, error) {
 		}
 	}()
 
-	return &serverInstance{
-		server:      server,
-		listener:    listener,
-		mgr:         mgr,
-		sess:        sess,
-		addr:        listener.Addr(),
-		editorProxy: editorProxy,
-	}, nil
+	si := &serverInstance{
+		server:   server,
+		listener: listener,
+		mgr:      mgr,
+		sess:     sess,
+		addr:     listener.Addr(),
+	}
+
+	if cfg.ngrok {
+		ngrokURL, ngrokLn, err := startNgrok(mux)
+		if err != nil {
+			log.Printf("ngrok: %v (continuing without tunnel)", err)
+		} else {
+			si.ngrokURL = ngrokURL
+			si.ngrokLn = ngrokLn
+		}
+	}
+
+	return si, nil
 }
 
-func logStartupInfo(cfg config, addr net.Addr) {
-	log.Printf("listening on https://%s", addr)
+func startNgrok(mux *http.ServeMux) (string, net.Listener, error) {
+	ln, err := ngrok.Listen(context.Background())
+	if err != nil {
+		return "", nil, err
+	}
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	go srv.Serve(ln)
+	return ln.URL().String(), ln, nil
+}
+
+func logStartupInfo(cfg config, si *serverInstance) {
+	log.Printf("listening on https://%s", si.addr)
+	if si.ngrokURL != "" {
+		log.Printf("ngrok tunnel: %s", si.ngrokURL)
+	}
 	if cfg.certFile == "" {
 		log.Println("using auto-generated self-signed certificate")
 	}
@@ -218,34 +273,103 @@ func logStartupInfo(cfg config, addr net.Addr) {
 	}
 }
 
+// logHub is a broadcast hub for server log lines. SSE clients subscribe
+// to receive log lines in real time.
+type logHub struct {
+	mu          sync.RWMutex
+	subscribers map[chan string]struct{}
+}
+
+func newLogHub() *logHub {
+	return &logHub{subscribers: make(map[chan string]struct{})}
+}
+
+func (h *logHub) subscribe() chan string {
+	ch := make(chan string, 64)
+	h.mu.Lock()
+	h.subscribers[ch] = struct{}{}
+	h.mu.Unlock()
+	return ch
+}
+
+func (h *logHub) unsubscribe(ch chan string) {
+	h.mu.Lock()
+	delete(h.subscribers, ch)
+	h.mu.Unlock()
+	close(ch)
+}
+
+func (h *logHub) broadcast(line string) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for ch := range h.subscribers {
+		select {
+		case ch <- line:
+		default:
+			// drop if subscriber is slow
+		}
+	}
+}
+
+// broadcastWriter wraps an inner io.Writer and broadcasts each complete
+// line to the logHub.
+type broadcastWriter struct {
+	inner io.Writer
+	hub   *logHub
+	buf   []byte
+}
+
+func newBroadcastWriter(inner io.Writer, hub *logHub) *broadcastWriter {
+	return &broadcastWriter{inner: inner, hub: hub}
+}
+
+func (w *broadcastWriter) Write(p []byte) (int, error) {
+	n, err := w.inner.Write(p)
+	w.buf = append(w.buf, p[:n]...)
+	for {
+		idx := -1
+		for i, b := range w.buf {
+			if b == '\n' {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			break
+		}
+		line := string(w.buf[:idx])
+		w.buf = w.buf[idx+1:]
+		w.hub.broadcast(line)
+	}
+	return n, err
+}
+
 func Run() {
 	cfg := loadConfig()
 
-	// Set up log writer that feeds into the TUI
+	hub := newLogHub()
+
+	// Set up log writer that feeds into the TUI and broadcasts to SSE
 	logWriter := tui.NewLogWriter()
-	log.SetOutput(logWriter)
+	bw := newBroadcastWriter(logWriter, hub)
+	log.SetOutput(bw)
 	log.SetFlags(log.Ltime)
 
-	si, err := startServer(cfg)
+	si, err := startServer(cfg, hub)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
 		os.Exit(1)
 	}
 
-	logStartupInfo(cfg, si.addr)
-
-	// Start code-server if available
-	var ed *editor.Editor
-	if si.editorProxy != nil {
-		ed, err = startEditor(cfg, si.editorProxy, logWriter)
-		if err != nil {
-			log.Printf("editor: %v (continuing without editor)", err)
-		}
-	}
+	logStartupInfo(cfg, si)
 
 	// Run TUI on main thread
-	model := tui.NewModel(si.mgr, cfg.shell, buildChildEnv())
-	model.SetServerURL(fmt.Sprintf("https://%s", si.addr))
+	serverURL := fmt.Sprintf("https://%s", si.addr)
+	if si.ngrokURL != "" {
+		serverURL = si.ngrokURL
+	}
+	provider := tui.NewLocalProvider(si.mgr, cfg.shell, buildChildEnv(), cfg.cwd, serverURL)
+	model := tui.NewModel(provider)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	logWriter.SetProgram(p)
 
@@ -261,10 +385,10 @@ func Run() {
 		fmt.Fprintf(os.Stderr, "tui error: %v\n", err)
 	}
 
-	// TUI exited — shut down editor, server, and kill all sessions
+	// TUI exited — shut down server and kill all sessions
 	log.SetOutput(os.Stderr) // restore for shutdown logs
-	if ed != nil {
-		ed.Stop()
+	if si.ngrokLn != nil {
+		si.ngrokLn.Close()
 	}
 	si.mgr.KillAll()
 	si.server.Close()
@@ -357,24 +481,17 @@ func runDaemonChild() {
 
 	cfg := loadConfig()
 
-	log.SetOutput(os.Stderr)
+	hub := newLogHub()
+	bw := newBroadcastWriter(os.Stderr, hub)
+	log.SetOutput(bw)
 	log.SetFlags(log.Ltime)
 
-	si, err := startServer(cfg)
+	si, err := startServer(cfg, hub)
 	if err != nil {
 		log.Fatalf("fatal: %v", err)
 	}
 
-	logStartupInfo(cfg, si.addr)
-
-	// Start code-server if available
-	var ed *editor.Editor
-	if si.editorProxy != nil {
-		ed, err = startEditor(cfg, si.editorProxy, os.Stderr)
-		if err != nil {
-			log.Printf("editor: %v (continuing without editor)", err)
-		}
-	}
+	logStartupInfo(cfg, si)
 
 	log.Println("daemon mode (detached)")
 
@@ -383,8 +500,8 @@ func runDaemonChild() {
 	sig := <-sigCh
 
 	log.Printf("received %v, shutting down...", sig)
-	if ed != nil {
-		ed.Stop()
+	if si.ngrokLn != nil {
+		si.ngrokLn.Close()
 	}
 	si.mgr.KillAll()
 
@@ -396,7 +513,7 @@ func runDaemonChild() {
 	log.Println("goodbye")
 }
 
-func setupMux(cfg config, sess *sessions, mgr *session.Manager, frontendContent fs.FS, editorProxy *editor.EditorProxy) *http.ServeMux {
+func setupMux(cfg config, sess *sessions, mgr *session.Manager, frontendContent fs.FS, hub *logHub) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// Login page
@@ -508,7 +625,7 @@ func setupMux(cfg config, sess *sessions, mgr *session.Manager, frontendContent 
 				shell = parent.Shell
 			}
 
-			ts, err := mgr.Create(body.Name, shell, 80, 24, buildChildEnv(), body.ParentID)
+			ts, err := mgr.Create(body.Name, shell, 80, 24, buildChildEnv(), body.ParentID, cfg.cwd)
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -616,6 +733,48 @@ func setupMux(cfg config, sess *sessions, mgr *session.Manager, frontendContent 
 		}()
 	})
 
+	// --- Log streaming SSE ---
+
+	if hub != nil {
+		mux.HandleFunc("/api/logs", func(w http.ResponseWriter, r *http.Request) {
+			if !requireAuth(w, r) {
+				return
+			}
+			if r.Method != http.MethodGet {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				http.Error(w, "streaming not supported", http.StatusInternalServerError)
+				return
+			}
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+			flusher.Flush()
+
+			ch := hub.subscribe()
+			defer hub.unsubscribe(ch)
+
+			ctx := r.Context()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case line, ok := <-ch:
+					if !ok {
+						return
+					}
+					fmt.Fprintf(w, "data: %s\n\n", line)
+					flusher.Flush()
+				}
+			}
+		})
+	}
+
 	// --- Session-aware PTY WebSocket: /pty/{id} ---
 
 	mux.HandleFunc("/pty/", func(w http.ResponseWriter, r *http.Request) {
@@ -710,18 +869,6 @@ func setupMux(cfg config, sess *sessions, mgr *session.Manager, frontendContent 
 			ts.WriteRaw(message)
 		}
 	})
-
-	// --- Editor (code-server) reverse proxy ---
-
-	if editorProxy != nil {
-		mux.Handle("/editor/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !requireAuth(w, r) {
-				return
-			}
-			// No COOP/COEP headers — they break code-server's iframes/workers
-			editorProxy.ServeHTTP(w, r)
-		}))
-	}
 
 	// --- Page routes ---
 
@@ -830,34 +977,6 @@ func buildChildEnv() []string {
 		result = append(result, k+"="+v)
 	}
 	return result
-}
-
-// startEditor creates and starts a code-server instance, wiring it into the proxy.
-func startEditor(cfg config, proxy *editor.EditorProxy, logOutput io.Writer) (*editor.Editor, error) {
-	baseDir, err := seanceDir()
-	if err != nil {
-		return nil, err
-	}
-
-	ed, err := editor.New(baseDir)
-	if err != nil {
-		return nil, err
-	}
-
-	workDir := cfg.editorDir
-	if workDir == "" {
-		workDir, _ = os.UserHomeDir()
-	}
-
-	ctx := context.Background()
-	if err := ed.Start(ctx, workDir, logOutput); err != nil {
-		return nil, err
-	}
-
-	proxy.SetHandler(ed.Handler())
-	log.Println("code-server started at /editor/")
-
-	return ed, nil
 }
 
 // TLS

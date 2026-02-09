@@ -16,6 +16,8 @@ func main() {
 	switch os.Args[1] {
 	case "daemon":
 		seance.RunDaemon()
+	case "tui":
+		seance.RunTUI()
 	case "attach":
 		id := ""
 		if len(os.Args) > 2 {
@@ -52,6 +54,7 @@ func printUsage() {
 Commands:
   (default)    Start server with TUI
   daemon       Start server without TUI (background mode)
+  tui          Connect TUI dashboard to a running daemon
   attach [id]  Attach to a session on a running daemon
   kill [id]    Kill a session on a running daemon
   stop         Shut down a running daemon
@@ -60,7 +63,8 @@ Commands:
 
 Flags:
   --no-password  Disable authentication
-  --no-editor    Disable embedded code-server editor
+  --cwd PATH     Working directory for new terminal sessions
+  --ngrok        Start an ngrok tunnel (requires NGROK_AUTHTOKEN)
   --insecure     Skip TLS verification (for attach/list with self-signed certs)
 
 Environment:
@@ -70,5 +74,6 @@ Environment:
   SEANCE_TLS_KEY     TLS key file
   SEANCE_SHELL       Default shell
   SEANCE_BUFFER_SIZE Ring buffer size per session
-  SEANCE_EDITOR_DIR  Working directory for code-server editor`)
+  SEANCE_CWD         Working directory for new terminal sessions
+  NGROK_AUTHTOKEN    ngrok auth token (for --ngrok)`)
 }

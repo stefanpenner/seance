@@ -5,6 +5,9 @@ go_library(
     srcs = [
         "keys.go",
         "model.go",
+        "provider.go",
+        "provider_local.go",
+        "provider_remote.go",
         "styles.go",
     ],
     importpath = "seance/internal/tui",

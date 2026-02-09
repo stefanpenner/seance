@@ -1595,7 +1595,8 @@ var COLOR_EMOJI_FONT_HINTS = [
   /apple color emoji/i,
   /noto color emoji/i,
   /segoe ui emoji/i,
-  /twemoji/i
+  /twemoji/i,
+  /openmoji/i
 ];
 var WIDE_FONT_HINTS = [
   /cjk/i,
@@ -52894,7 +52895,7 @@ function createResttyApp(options) {
     const firstCp = text.codePointAt(0) ?? 0;
     const nerdSymbol = isNerdSymbolCodepoint(firstCp);
     const preferSymbol = nerdSymbol || isSymbolCp(firstCp);
-    const preferEmoji = text.includes("‍") || chars.some((ch) => {
+    const preferEmoji = text.includes("‍") || text.includes("\uFE0F") || chars.some((ch) => {
       const cp = ch.codePointAt(0) ?? 0;
       if (cp >= 127462 && cp <= 127487)
         return true;
@@ -52911,6 +52912,9 @@ function createResttyApp(options) {
           continue;
         let ok = true;
         for (const ch of chars) {
+          const chCp = ch.codePointAt(0) ?? 0;
+          if (chCp === 0xFE0F || chCp === 0xFE0E)
+            continue;
           if (!fontHasGlyph(entry.font, ch)) {
             ok = false;
             break;
@@ -52918,7 +52922,8 @@ function createResttyApp(options) {
         }
         if (!ok)
           continue;
-        const shaped = shapeClusterWithFont(entry, text);
+        const emojiText = text.replace(/\uFE0F/g, "").replace(/\uFE0E/g, "") || text;
+        const shaped = shapeClusterWithFont(entry, emojiText);
         let score = shaped.glyphs.length;
         if (/noto color emoji/i.test(entry.label))
           score -= 0.25;
@@ -57521,13 +57526,13 @@ function buildFontSourcesForSelection(value, localMatcher) {
   });
   sources.push({
     type: "url",
-    label: "Noto Color Emoji",
-    url: FONT_URL_NOTO_COLOR_EMOJI
+    label: "OpenMoji",
+    url: FONT_URL_OPENMOJI
   });
   sources.push({
     type: "url",
-    label: "OpenMoji",
-    url: FONT_URL_OPENMOJI
+    label: "Noto Color Emoji",
+    url: FONT_URL_NOTO_COLOR_EMOJI
   });
   sources.push({
     type: "url",

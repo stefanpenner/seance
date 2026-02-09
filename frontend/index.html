@@ -6,21 +6,35 @@
     <title>seance</title>
     <link rel="stylesheet" href="./style.css" />
     <style>
-      .settings-fab-stack .seance-logout {
-        font-size: 11px;
-        line-height: 1;
-        padding: 6px 10px;
-        border-radius: 8px;
-        text-decoration: none;
-        color: #a9b1d6;
-        background: rgba(122,162,247,0.06);
-        border: 1px solid rgba(122,162,247,0.12);
-        cursor: pointer;
-        transition: background 0.15s, color 0.15s;
+      .switcher-footer {
+        display: flex;
+        gap: 8px;
+        padding: 8px 12px;
+        border-top: 1px solid #29334d;
+        justify-content: flex-end;
       }
-      .settings-fab-stack .seance-logout:hover {
+      .switcher-footer a,
+      .switcher-footer button {
+        font-size: 10px;
+        padding: 4px 10px;
+        border-radius: 5px;
+        border: 1px solid #29334d;
+        background: #1a1b26;
+        color: #a9b1d6;
+        text-decoration: none;
+        cursor: pointer;
+        font-family: inherit;
+        transition: background 0.15s, color 0.15s, border-color 0.15s;
+      }
+      .switcher-footer a:hover,
+      .switcher-footer button:hover {
+        border-color: #3b4261;
+        color: #c0caf5;
+      }
+      .switcher-footer .switcher-logout:hover {
         background: rgba(247,118,142,0.12);
         color: #f7768e;
+        border-color: rgba(247,118,142,0.3);
       }
     </style>
     <script>
@@ -93,7 +107,6 @@
         // --- Session Switcher (Ctrl+K) ---
         var switcher = document.getElementById('switcher');
         var switcherList = document.getElementById('switcherList');
-        var switcherPreview = document.getElementById('switcherPreview');
         var switcherRename = document.getElementById('switcherRename');
         var switcherRenameInput = document.getElementById('switcherRenameInput');
         var switcherSessions = [];
@@ -115,14 +128,6 @@
           var hr = Math.floor(min / 60);
           if (hr < 24) return hr + 'h';
           return Math.floor(hr / 24) + 'd';
-        }
-
-        function stripAnsi(str) {
-          return str.replace(/\x1b\[[\x20-\x3f]*[\x40-\x7e]/g, '')
-                    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
-                    .replace(/\x1b[()][0-9A-B]/g, '')
-                    .replace(/\x1b[\x20-\x2f]*[\x30-\x7e]/g, '')
-                    .replace(/[\x00-\x08\x0e-\x1f\x7f]/g, '');
         }
 
         function renderSwitcherList() {
@@ -147,28 +152,6 @@
               switchToSelected();
             });
           });
-
-          loadPreview();
-        }
-
-        function loadPreview() {
-          if (switcherSessions.length === 0) {
-            switcherPreview.textContent = '';
-            return;
-          }
-          var s = switcherSessions[switcherCursor];
-          if (!s) return;
-          fetch('/api/sessions/' + s.id + '/preview')
-            .then(function(r) { return r.text(); })
-            .then(function(text) {
-              var clean = stripAnsi(text);
-              // Show last ~20 lines
-              var lines = clean.split('\n');
-              if (lines.length > 20) lines = lines.slice(-20);
-              switcherPreview.textContent = lines.join('\n');
-              switcherPreview.scrollTop = switcherPreview.scrollHeight;
-            })
-            .catch(function() { switcherPreview.textContent = ''; });
         }
 
         function openSwitcher() {
@@ -178,7 +161,6 @@
           switcherRename.style.display = 'none';
           switcher.style.display = '';
           switcherCursor = 0;
-          switcherPreview.textContent = '';
 
           fetch('/api/sessions')
             .then(function(r) { return r.json(); })
@@ -329,6 +311,32 @@
             case 'x':
               killSwitcherSession();
               break;
+            case 's':
+              closeSwitcher();
+              var dlg = document.getElementById('settingsDialog');
+              if (dlg) dlg.showModal();
+              break;
+            case 'l':
+              location.href = '/logout';
+              break;
+          }
+        }, true);
+
+        // Cmd-W / Ctrl-W: close focused ghostty pane before closing window
+        window.addEventListener('keydown', function(e) {
+          if ((e.metaKey || e.ctrlKey) && e.key === 'w') {
+            var paneRoot = document.getElementById('paneRoot');
+            if (!paneRoot) return;
+            // Count terminal panes (direct children that are pane containers)
+            var panes = paneRoot.querySelectorAll('[data-pane-id]');
+            if (panes.length > 1) {
+              // Multiple panes — send close to the focused one via Ghostty
+              e.preventDefault();
+              e.stopImmediatePropagation();
+              // Dispatch a ghostty close_surface action
+              window.dispatchEvent(new CustomEvent('ghostty-close-surface'));
+            }
+            // If only one pane (or none), let browser handle Cmd-W normally
           }
         }, true);
 
@@ -387,6 +395,7 @@
       <span id="sessionName"></span>
       <div class="session-bar-right">
         <span class="session-bar-hint">ctrl+shift+k</span>
+        <a href="/editor/" class="session-bar-link">editor</a>
         <a href="/sessions" class="session-bar-link">sessions</a>
       </div>
     </div>
@@ -395,28 +404,20 @@
       <div class="switcher-panel">
         <div class="switcher-header">
           <span class="switcher-title">Switch Session</span>
-          <span class="switcher-keys">j/k navigate &middot; enter switch &middot; n new &middot; r rename &middot; x kill &middot; esc close</span>
+          <span class="switcher-keys">j/k navigate &middot; enter switch &middot; n new &middot; r rename &middot; x kill &middot; s settings &middot; l logout &middot; esc close</span>
         </div>
         <div id="switcherList" class="switcher-list"></div>
-        <div id="switcherPreview" class="switcher-preview"></div>
         <div id="switcherRename" class="switcher-rename" style="display:none">
           <label>Rename: <input id="switcherRenameInput" type="text" autocomplete="off" /></label>
+        </div>
+        <div class="switcher-footer">
+          <button type="button" onclick="var d=document.getElementById('settingsDialog');if(d)d.showModal();document.getElementById('switcher').style.display='none';">settings</button>
+          <a class="switcher-logout" href="/logout">logout</a>
         </div>
       </div>
     </div>
 
     <main id="paneRoot" class="pane-root"></main>
-
-    <div class="settings-fab-stack">
-      <a class="seance-logout" href="/logout" title="Sign out">logout</a>
-      <button id="settingsFab" class="settings-fab" type="button" aria-label="Open settings" title="Settings">
-        <svg class="settings-fab-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path
-            d="M19.14 12.94c.04-.31.06-.62.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.2 7.2 0 0 0-1.63-.94L14.5 2.5a.5.5 0 0 0-.5-.5h-4a.5.5 0 0 0-.5.5l-.36 2.82c-.58.22-1.13.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.6 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.62-.06.94s.02.63.06.94L2.72 14.52a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.4 1.05.72 1.63.94l.36 2.82a.5.5 0 0 0 .5.5h4a.5.5 0 0 0 .5-.5l.25-2.82c.58-.22 1.13-.54 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"
-          />
-        </svg>
-      </button>
-    </div>
 
     <dialog id="settingsDialog" class="settings-dialog">
       <div class="panel settings-panel">
@@ -456,21 +457,8 @@
         <section class="section">
           <div class="section-title">Connection</div>
           <div class="field-row">
-            <label>
-              <span>Backend</span>
-              <select id="connectionBackend">
-                <option value="ws" selected>WebSocket PTY</option>
-                <option value="webcontainer">WebContainer</option>
-              </select>
-            </label>
-          </div>
-          <div class="field-row">
             <input id="ptyUrl" type="text" value="" placeholder="PTY URL" />
             <button id="btnPty">Connect</button>
-          </div>
-          <div class="field-row">
-            <input id="wcCommand" type="text" value="jsh" placeholder="WebContainer command" />
-            <input id="wcCwd" type="text" value="/" placeholder="WebContainer cwd" />
           </div>
           <div id="connectionHint" class="hint">Using WebSocket PTY</div>
           <div class="pty-status"><span id="ptyStatus">disconnected</span></div>

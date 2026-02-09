@@ -18,32 +18,6 @@ use_repo(
     "com_github_charmbracelet_lipgloss",
     "com_github_creack_pty",
     "com_github_gorilla_websocket",
+    "com_ngrok_golang_ngrok_v2",
     "org_golang_x_term",
-)
-
-# code-server release tarballs (v4.108.2)
-http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
-
-http_file(
-    name = "code_server_linux_amd64",
-    urls = ["https://github.com/coder/code-server/releases/download/v4.108.2/code-server-4.108.2-linux-amd64.tar.gz"],
-    downloaded_file_path = "code-server.tar.gz",
-)
-
-http_file(
-    name = "code_server_linux_arm64",
-    urls = ["https://github.com/coder/code-server/releases/download/v4.108.2/code-server-4.108.2-linux-arm64.tar.gz"],
-    downloaded_file_path = "code-server.tar.gz",
-)
-
-http_file(
-    name = "code_server_macos_amd64",
-    urls = ["https://github.com/coder/code-server/releases/download/v4.108.2/code-server-4.108.2-macos-amd64.tar.gz"],
-    downloaded_file_path = "code-server.tar.gz",
-)
-
-http_file(
-    name = "code_server_macos_arm64",
-    urls = ["https://github.com/coder/code-server/releases/download/v4.108.2/code-server-4.108.2-macos-arm64.tar.gz"],
-    downloaded_file_path = "code-server.tar.gz",
 )
