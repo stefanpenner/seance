@@ -265,6 +265,13 @@ func (s *Terminal) Exited() (bool, int) {
 
 // Resize changes the PTY dimensions and notifies other viewers.
 func (s *Terminal) Resize(cols, rows uint16, excludeViewerID string) error {
+	s.Mu.RLock()
+	same := s.cols == cols && s.rows == rows
+	s.Mu.RUnlock()
+	if same {
+		return nil
+	}
+
 	if err := pty.Setsize(s.ptmx, &pty.Winsize{Cols: cols, Rows: rows}); err != nil {
 		return fmt.Errorf("pty resize: %w", err)
 	}
@@ -446,6 +453,30 @@ func (m *Manager) Rename(id, name string) error {
 	s.Name = name
 	s.Mu.Unlock()
 	return nil
+}
+
+// BroadcastToFamily sends a text message to all viewers of the given parent
+// session and all its child sessions.
+func (m *Manager) BroadcastToFamily(parentID string, msg []byte) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if s, ok := m.sessions[parentID]; ok {
+		s.Mu.RLock()
+		for _, v := range s.viewers {
+			_ = v.SendText(msg)
+		}
+		s.Mu.RUnlock()
+	}
+	for _, s := range m.sessions {
+		if s.ParentID == parentID {
+			s.Mu.RLock()
+			for _, v := range s.viewers {
+				_ = v.SendText(msg)
+			}
+			s.Mu.RUnlock()
+		}
+	}
 }
 
 // KillAll kills all sessions. Used during graceful shutdown.

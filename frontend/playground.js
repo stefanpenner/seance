@@ -6839,6 +6839,13 @@ function handleServerMessage(payload, callbacks) {
       callbacks.onExit?.(msg.code ?? 0);
       return true;
     }
+    if (msg.type === "resize_notify") {
+      callbacks.onResizeNotify?.(msg.cols ?? 0, msg.rows ?? 0);
+      return true;
+    }
+    if (msg.type === "layout_changed") {
+      return true;
+    }
   } catch {}
   return false;
 }
@@ -58245,6 +58252,57 @@ async function restoreLayout() {
   }
 }
 restoreLayout();
+var syncLayoutTimer = 0;
+async function syncLayout() {
+  if (!currentSessionId || getConnectionBackend() === "webcontainer")
+    return;
+  try {
+    const resp = await fetch("/api/sessions");
+    if (!resp.ok)
+      return;
+    const allSessions = await resp.json();
+    const children = allSessions.filter((s) => s.parent_id === currentSessionId).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    const serverIds = new Set(children.map((s) => s.id));
+    const sessionToPaneId = new Map;
+    sessionToPaneId.set(currentSessionId, firstPane.id);
+    for (const [paneId, state] of paneStates) {
+      if (state.sessionId && state.sessionId !== currentSessionId) {
+        sessionToPaneId.set(state.sessionId, paneId);
+      }
+    }
+    restoringLayout = true;
+    for (const child of children) {
+      if (sessionToPaneId.has(child.id))
+        continue;
+      const direction = child.split_direction === "horizontal" ? "horizontal" : "vertical";
+      let sourcePaneId = firstPane.id;
+      if (child.split_from_id && sessionToPaneId.has(child.split_from_id)) {
+        sourcePaneId = sessionToPaneId.get(child.split_from_id);
+      }
+      const newPane = restty.splitPane(sourcePaneId, direction);
+      if (newPane) {
+        sessionToPaneId.set(child.id, newPane.id);
+        await newPane.app.init();
+        connectPaneToPty(newPane, child.id);
+      }
+    }
+    restoringLayout = false;
+    for (const [paneId, state] of paneStates) {
+      if (state.sessionId && state.sessionId !== currentSessionId && !serverIds.has(state.sessionId)) {
+        restty.closePane(paneId);
+      }
+    }
+    queueResizeAllPanes();
+  } catch (e) {
+    restoringLayout = false;
+    console.error("Failed to sync layout:", e);
+  }
+}
+function scheduleSyncLayout() {
+  clearTimeout(syncLayoutTimer);
+  syncLayoutTimer = setTimeout(syncLayout, 200);
+}
+window.addEventListener("layout-changed", scheduleSyncLayout);
 window.addEventListener("pty-exit", (e) => {
   const exitedSessionId = e.detail.sessionId;
   if (!exitedSessionId || exitedSessionId === currentSessionId)

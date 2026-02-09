@@ -132,6 +132,9 @@
                       }));
                     }
                   }
+                  if (msg.type === 'layout_changed') {
+                    window.dispatchEvent(new CustomEvent('layout-changed'));
+                  }
                 } catch(e) {}
               }
             });
@@ -296,6 +299,10 @@
           if (e.key === 'Escape') { e.preventDefault(); switcherMode = 'navigate'; switcherRename.style.display = 'none'; }
         });
 
+        document.getElementById('switcherNewSession').addEventListener('click', function() {
+          createSwitcherSession();
+        });
+
         // Click overlay backdrop to close
         switcher.addEventListener('click', function(e) {
           if (e.target === switcher) closeSwitcher();
@@ -310,14 +317,6 @@
             e.preventDefault();
             e.stopImmediatePropagation();
             if (switcherOpen) closeSwitcher(); else openSwitcher();
-            return;
-          }
-
-          // Ctrl+Shift+N for new session
-          if (e.ctrlKey && e.shiftKey && e.key === 'N') {
-            e.preventDefault();
-            e.stopImmediatePropagation();
-            createSwitcherSession();
             return;
           }
 
@@ -447,6 +446,7 @@
           <label>Rename: <input id="switcherRenameInput" type="text" autocomplete="off" /></label>
         </div>
         <div class="switcher-footer">
+          <button type="button" id="switcherNewSession">new session</button>
           <button type="button" onclick="var d=document.getElementById('settingsDialog');if(d)d.showModal();document.getElementById('switcher').style.display='none';">settings</button>
           <a class="switcher-logout" href="/logout">logout</a>
         </div>

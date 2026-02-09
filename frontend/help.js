@@ -75,12 +75,26 @@
     dialog.close();
   });
 
-  // Ctrl+Shift+? to toggle
+  // Ctrl+Shift+N for new session (works on all pages)
+  function createNewSession() {
+    fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      .then(function(r) { return r.json(); })
+      .then(function(s) { location.href = '/terminal?session=' + s.id; });
+  }
+
   window.addEventListener('keydown', function(e) {
+    // Ctrl+Shift+? to toggle help
     if (e.ctrlKey && e.shiftKey && (e.key === '?' || e.key === '/')) {
       e.preventDefault();
       e.stopImmediatePropagation();
       if (dialog.open) dialog.close(); else dialog.showModal();
+      return;
+    }
+    // Ctrl+Shift+N for new session
+    if (e.ctrlKey && e.shiftKey && e.key === 'N') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      createNewSession();
     }
   }, true);
 })();

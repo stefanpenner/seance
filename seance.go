@@ -636,6 +636,11 @@ func setupMux(cfg config, sess *sessions, mgr *session.Manager, frontendContent 
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(ts.GetInfo())
 
+			if body.ParentID != "" {
+				layoutMsg, _ := json.Marshal(map[string]string{"type": "layout_changed"})
+				mgr.BroadcastToFamily(body.ParentID, layoutMsg)
+			}
+
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -656,9 +661,17 @@ func setupMux(cfg config, sess *sessions, mgr *session.Manager, frontendContent 
 
 		// POST /api/sessions/{id}/close — used by sendBeacon for sub-session cleanup
 		if suffix == "close" && r.Method == http.MethodPost {
+			var parentID string
+			if ts := mgr.Get(id); ts != nil {
+				parentID = ts.ParentID
+			}
 			if err := mgr.Kill(id); err != nil {
 				http.Error(w, "session not found", http.StatusNotFound)
 				return
+			}
+			if parentID != "" {
+				layoutMsg, _ := json.Marshal(map[string]string{"type": "layout_changed"})
+				mgr.BroadcastToFamily(parentID, layoutMsg)
 			}
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -684,10 +697,18 @@ func setupMux(cfg config, sess *sessions, mgr *session.Manager, frontendContent 
 
 		switch r.Method {
 		case http.MethodDelete:
+			var parentID string
+			if ts := mgr.Get(id); ts != nil {
+				parentID = ts.ParentID
+			}
 			if err := mgr.Kill(id); err != nil {
 				w.WriteHeader(http.StatusNotFound)
 				json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 				return
+			}
+			if parentID != "" {
+				layoutMsg, _ := json.Marshal(map[string]string{"type": "layout_changed"})
+				mgr.BroadcastToFamily(parentID, layoutMsg)
 			}
 			w.WriteHeader(http.StatusNoContent)
 
@@ -798,16 +819,6 @@ func setupMux(cfg config, sess *sessions, mgr *session.Manager, frontendContent 
 			return
 		}
 
-		if colsStr := r.URL.Query().Get("cols"); colsStr != "" {
-			if cols, err := strconv.Atoi(colsStr); err == nil && cols > 0 {
-				if rowsStr := r.URL.Query().Get("rows"); rowsStr != "" {
-					if rows, err := strconv.Atoi(rowsStr); err == nil && rows > 0 {
-						ts.Resize(uint16(cols), uint16(rows), "")
-					}
-				}
-			}
-		}
-
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			log.Printf("websocket upgrade: %v", err)
@@ -817,6 +828,16 @@ func setupMux(cfg config, sess *sessions, mgr *session.Manager, frontendContent 
 
 		viewer, snapshot := ts.Attach(conn)
 		defer ts.Detach(viewer.ID)
+
+		if colsStr := r.URL.Query().Get("cols"); colsStr != "" {
+			if cols, err := strconv.Atoi(colsStr); err == nil && cols > 0 {
+				if rowsStr := r.URL.Query().Get("rows"); rowsStr != "" {
+					if rows, err := strconv.Atoi(rowsStr); err == nil && rows > 0 {
+						ts.Resize(uint16(cols), uint16(rows), viewer.ID)
+					}
+				}
+			}
+		}
 
 		status, _ := json.Marshal(map[string]any{
 			"type":         "status",
